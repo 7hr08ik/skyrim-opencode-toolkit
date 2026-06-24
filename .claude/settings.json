@@ -9,6 +9,12 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-bash.sh\"",
             "timeout": 5,
             "statusMessage": "Checking command safety..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/snapshot-before-tool.sh\"",
+            "timeout": 15,
+            "statusMessage": "Snapshotting scripts..."
           }
         ]
       },

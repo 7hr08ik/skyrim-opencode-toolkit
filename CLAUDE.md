@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A modded Skyrim installation managed by Vortex. (Adapt paths and version-specific notes to your Skyrim version: SE, AE, VR, or LE.)
+A modded Skyrim installation managed by Vortex (or your mod manager of choice). Adapt paths and version-specific notes to your Skyrim version: SE, AE, VR, or LE. VR-specific behavior is flagged throughout — never assume SSE behavior equals VR behavior.
 
 ## Key Paths
 
 - **Game root**: `{{GAME_ROOT}}/`
 - **User INI configs**: `{{DOCUMENTS_DIR}}/My Games/Skyrim VR/` (Skyrim.ini, SkyrimVR.ini, SkyrimPrefs.ini)
-- **Load order**: `C:/Users/{{USERNAME}}/AppData/Local/Skyrim VR/loadorder.txt` and `plugins.txt`
+- **Load order**: `%LOCALAPPDATA%/Skyrim VR/loadorder.txt` and `plugins.txt`
 - **SKSE plugins**: `Data/SKSE/Plugins/`
 - **Mod data**: `Data/` (ESPs, BSAs, meshes, textures, scripts)
 
@@ -23,10 +23,12 @@ All under `tools/`:
 | **Champollion** | Decompile Papyrus `.pex` → `.psc` | `tools/Champollion/Champollion.exe input.pex` |
 | **Caprica** | Compile Papyrus `.psc` → `.pex` | `tools/Caprica/Caprica.exe --game skyrim --import "Data/Scripts/Source" input.psc` |
 | **XEditLib.dll** | Programmatic ESP/ESM reading via FFI | Load with koffi in Node.js (see below) |
-| **Spriggit** | ESP ↔ YAML/JSON conversion (.NET) | `dotnet tool run spriggit serialize ...` |
+| **Spriggit** | ESP ↔ YAML/JSON conversion (.NET) | `spriggit serialize ...` |
 | **AutoMod CLI** | NIF meshes, BSA archives, audio, MCM, ESP one-liners | `bash tools/automod-cli.sh <module> <command> --json` |
+| **PyFFI** | NIF geometry edit — **NiTriShape (LE-format) ONLY** (Python 3.10) | See PyFFI section below |
+| **PyNifly** | NIF read/write incl. **BSTriShape (SSE)** + **animation/controller authoring** (Python, prebuilt DLL) | See PyNifly section below |
 
-> **Note**: Install tools you need into a `tools/` folder in your game directory. See the [xeditlib](https://github.com/WingedGuardian/xeditlib) repo for XEditLib setup. AutoMod CLI is installed via the setup prompt.
+> **Note**: Install the tools you need into a `tools/` folder in your game directory; the setup prompt walks through this. See the [xeditlib](https://github.com/WingedGuardian/xeditlib) repo for XEditLib setup. NifSkope and Blender (used for NIF render-verification and mesh repair — see below) are large external GUI apps installed separately, not bundled.
 
 ## AutoMod CLI
 
@@ -39,17 +41,93 @@ bash tools/automod-cli.sh <module> <command> [args] --json
 
 | Module | Key Commands | Use For |
 |--------|-------------|---------|
-| **nif** | `info`, `list-textures`, `replace-textures`, `fix-eyes`, `scale`, `verify` | Mesh inspection and editing |
+| **nif** | `info`, `list-textures`, `replace-textures`, `fix-eyes`, `scale`, `verify` | Mesh inspection and editing. **VR: check for PreWEAPON/PreSHIELD nodes.** |
 | **archive** | `info`, `list`, `extract`, `create`, `add-files`, `diff`, `merge` | BSA/BA2 full CRUD |
 | **audio** | `info`, `extract-fuz`, `create-fuz`, `wav-to-xwm` | Voice files (FUZ/XWM/WAV) |
-| **mcm** | `create`, `add-toggle`, `add-slider`, `validate` | SkyUI MCM menus |
-| **esp** | `add-weapon`, `add-spell`, `add-armor`, `add-npc`, `add-quest`, etc. | Quick one-liner record creation |
+| **mcm** | `create`, `add-toggle`, `add-slider`, `validate` | SkyUI MCM menus. **VR: requires SkyUI VR fork.** |
+| **esp** | `add-weapon`, `add-spell`, `add-armor`, `add-npc`, `add-quest`, `attach-script`, `set-property`, etc. | Quick one-liner record creation |
 
 ### When to Use Which Tool
 - **AutoMod `esp`**: Quick one-liner additions. Best for simple records.
 - **Spriggit**: Complex multi-field editing via YAML. Best for detailed work.
-- **xeditlib**: Programmatic traversal and diffing. Best for analysis.
-- **AutoMod `nif`/`archive`/`audio`/`mcm`**: Only tools available for these operations.
+- **xeditlib**: Programmatic traversal and diffing. Best for analysis/read-heavy operations.
+- **AutoMod `nif`/`archive`/`audio`/`mcm`**: Often the only tools available for these operations.
+- **PyFFI / PyNifly**: NIF geometry and animation authoring (see below).
+- **AutoMod `nif` cannot inspect Havok collision (`bhk*`) blocks** — it handles textures/strings/shaders only. Use NifSkope or a purpose-built parser for collision.
+
+## PyFFI (NIF geometry edits — LE-format NiTriShape only)
+
+**Requires Python 3.10** (not 3.12) and a `time.clock = time.perf_counter` monkey-patch.
+
+> **HARD LIMITS:**
+> 1. PyFFI **cannot read BSTriShape at all** (`Unknown block type 'BSTriShape'`) — i.e. any SSE-format (user_version_2=100) NIF. Use PyNifly.
+> 2. PyFFI can construct controller blocks, but an **authored NiControllerManager/NiControllerSequence CTDs the engine** despite passing PyFFI's own readback — it omits header string-table registrations the engine requires. **Never author animations with PyFFI — use PyNifly.**
+> 3. Building from a fresh `NifFormat.Data()` corrupts the header string table on write. Always **load an existing valid NIF and restructure it** instead.
+>
+> PyFFI remains the right tool for LE-format NiTriShape geometry edits (blade split/subdivision, bound spheres, vertex shifts).
+
+```python
+# run with your Python 3.10 interpreter
+import time; time.clock = time.perf_counter
+from pyffi.formats.nif import NifFormat
+
+with open('path/to/input.nif', 'rb') as f:
+    data = NifFormat.Data(); data.read(f)
+
+# ... modify blocks ...
+
+with open('path/to/output.nif', 'wb') as f:
+    data.write(f)
+```
+
+### Why PyFFI over binary patching / NifSkope re-saves
+- Preserves exact NIF format (BSStreamVersion, block types, shader flags, texture slots).
+- Handles version differences (83 vs 100) correctly — no format corruption.
+- NifSkope converts NIFs to BSStreamVersion 100 (SSE format) on save, which can strip texture slots and change BSLightingShaderProperty structure → crashes with Community Shaders / TruePBR in VR. Scripted PyFFI edits avoid this.
+
+### Key operations
+- **Collision shape editing**: `block.dimensions.y = new_value` on `bhkBoxShape`
+- **Transform editing**: `block.transform.m_42 = new_value` on `bhkConvexTransformShape`
+- **Block iteration**: `for block in data.blocks:` + `type(block).__name__` to find block types
+
+## PyNifly (modern NIF lib — BSTriShape + animation authoring)
+
+Installed at `tools/pynifly/io_scene_nifly/pyn/` (BadDogSkyrim PyNifly; prebuilt `NiflyDLL.dll` ships with it — no Blender, no compile; plain Python 3.10/3.12 x64). It wraps ousnius/nifly, the library behind BodySlide/Outfit Studio.
+
+```python
+import sys, os
+sys.path.insert(0, "tools/pynifly/io_scene_nifly")
+from pyn import pynifly      # import as the package, NOT `import pynifly`
+pynifly.NifFile.Load(os.path.abspath("tools/pynifly/io_scene_nifly/pyn/NiflyDLL.dll"))
+nf = pynifly.NifFile(path)               # reads SSE BSTriShape AND LE NiTriShape
+[s.name for s in nf.shapes]; list(nf.nodes.keys())
+```
+
+**Use PyNifly for** the things PyFFI can't: any **BSTriShape (SSE)** NIF, and **all animation/controller authoring** — it has `.New()` factories for `NiControllerManager / NiControllerSequence / NiMultiTargetTransformController / NiTransformData / NiTransformInterpolator / NiDefaultAVObjectPalette / BSXFlags / NiTextKeyExtraData` that register header strings correctly (the exact thing PyFFI botches → CTD). This is what makes **self-spinning / telescoping / keyframe-animated effect meshes** possible (e.g. a `SpecialIdle`-named `NiControllerSequence` auto-loops on a placed Activator with zero scripting).
+
+**ALSO the validation gate:** after authoring/editing any NIF, cross-read it with PyNifly (an independent, battle-tested parser) before in-game testing — a clean PyNifly read catches malformed files that PyFFI's same-tool readback misses. Check the *specific* crashable subsystem (e.g. the controller), since a geometry-only read can pass even when the animation stack is malformed.
+
+## NIF Validation & Render Verification
+
+A crash-to-desktop must be caught in tooling, not in the headset. Use the right tool for each role:
+
+| Tool | Role |
+|------|------|
+| **PyFFI** | LE-format NiTriShape geometry edits |
+| **PyNifly** | BSTriShape (SSE) + animation/controller authoring + **independent parse-validation gate** |
+| **NifSkope** | Independent **render gate** (GUI) — visual confirmation a NIF renders |
+| **Blender (headless)** | Mesh **repair** + **render-to-PNG** verification (uses the same nifly lib as PyNifly — good for repair, NOT an independent parser) |
+
+**Gates before any in-game test:** (1) author with valid-by-construction tools (PyNifly, not hand-rolled controller blocks); (2) cross-validate with an independent, stricter parser; (3) diff against a known-good structure. Render a PNG (Blender headless) so a mesh/VFX fix is confirmed in chat before a game launch.
+
+## ESP Cross-Reference Integrity (`tools/esp-verify-wrapper.sh`)
+
+Guards against the silent re-mastering / dropped-reference corruption class during bulk ESP operations (mod splits, plugin renames, master-list edits, YAML find-replace). Tool-agnostic; snapshots stored outside the game dir so it never trips the edit hooks.
+- `bash tools/esp-verify-wrapper.sh snapshot Data/Mod.esp [...]` — before a risky op
+- `bash tools/esp-verify-wrapper.sh verify   Data/Mod.esp [...]` — after; exits 1 + loud report on any reference whose target master changed or vanished
+- `bash tools/esp-verify-wrapper.sh guard Data/Mod.esp [...] -- <command...>` — snapshot → run → verify, one shot
+
+**Standing practice**: snapshot before, verify after, ANY bulk ESP operation. If a change is intended, re-run `snapshot` to accept it as the new baseline.
 
 ## XEditLib.dll API (Critical Notes)
 
@@ -94,6 +172,8 @@ Settings load in this order (later overrides earlier):
 
 **Always search a mod's Nexus mod page before investigating it.** Check the description, tutorials/articles, comments, and bug reports before going in blind. This saves enormous time -- most issues have been seen and documented by other users.
 
+Nexus also offers a free REST+GraphQL API ([api-docs.nexusmods.com](https://api-docs.nexusmods.com/)) for mod **version, update dates, changelogs, file info, and dependencies** — useful for update detection and migration/triage. Supply your own free **Personal API Key** (nexusmods.com → Site preferences → API Access) and send it raw as the `apikey` request header. Skyrim SE/VR domain = `skyrimspecialedition`; endpoints take `game_domain_name` + `mod_id`. A personal key is for personal/local use only — never commit or log it, and a shared tool must have each user supply their own.
+
 ## Knowledgebase
 
 `KNOWLEDGEBASE.md` (project root) is the master reference for all discovered quirks, gotchas, and cross-version differences. **Always consult it before making changes** to avoid repeating past mistakes.
@@ -104,7 +184,7 @@ Settings load in this order (later overrides earlier):
 
 These are the most dangerous/common pitfalls. Consult `KNOWLEDGEBASE.md` for full details.
 
-1. **RemoveSpell doesn't fire OnEffectFinish** -- use `DispelSpell` when cleanup logic exists
+1. **RemoveSpell doesn't fire OnEffectFinish** -- use `DispelSpell` when cleanup logic exists (but `DispelSpell` excludes ability-type spells)
 2. **All effects on a spell must have the same casting type** -- mismatches cause silent failure
 3. **VMAD editing is fragile** -- use `GetFormFromFile()` to minimize properties; xEdit can't add scripts to VMAD
 4. **PlayIdle fails in VR** -- VRIK overrides skeleton IK; bypass with timed Papyrus scripts
@@ -119,6 +199,9 @@ These are the most dangerous/common pitfalls. Consult `KNOWLEDGEBASE.md` for ful
 13. **SetVehicle causes HMD desync in VR** -- avoid entirely
 14. **GoToState("") in OnUnload -> Self=None crash** -- move to OnLoad instead
 15. **Navmesh creation is CK-only** -- xEdit can only delete, never recreate
+16. **VR controller input is not on the SKSE Input API** -- use the VRIK API for trigger/grip/button detection
+17. **Spell effect Area is in FEET, not game units** -- Area=60 ≈ 18m radius
+18. **Papyrus Sound type maps to SOUN, not SNDR** -- passing a SNDR FormID silently returns None
 
 ## xelib Dry-Run Convention
 
@@ -135,18 +218,28 @@ For **creating or editing ESP records**, prefer Spriggit over xelib. Spriggit se
 
 ### Workflow
 1. **Serialize**: `spriggit serialize --InputPath "Data/MyMod.esp" --OutputPath "/tmp/mymod-yaml" --GameRelease SkyrimSE --PackageName Spriggit.Yaml --PackageVersion "0.40.0"`
-2. **Edit**: Read and modify the YAML files directly (Claude's Edit tool works natively on these)
+2. **Edit**: Read and modify the YAML files directly
 3. **Review**: User reviews the YAML changes (human-readable diffs)
 4. **Deserialize**: `spriggit deserialize --InputPath "/tmp/mymod-yaml" --OutputPath "Data/MyMod.esp"`
 
 ### When to Use Which
-- **Spriggit**: Creating new ESPs, editing existing records, any task where you're modifying specific fields. Simpler, no setup beyond `dotnet tool install`.
-- **xeditlib**: Bulk inspection, programmatic traversal (e.g., "find all spells with mismatched casting types"), diffing two ESPs, analysis scripts. Better for read-heavy operations across many records.
+- **Spriggit**: Creating new ESPs, editing existing records, any task where you're modifying specific fields.
+- **xeditlib**: Bulk inspection, programmatic traversal, diffing two ESPs, analysis scripts.
 
 ### Spriggit Notes
 - `spriggit-meta.json` is required in the YAML root for deserialization
 - ESP header version must be 1.7 for SSE/VR (not 1.0)
-- `--GameRelease` is only for serialize, NOT deserialize
+- `--GameRelease` is only for serialize, NOT deserialize; `--PackageVersion` is REQUIRED when `--PackageName` is set
+- Use `-u` / `--ErrorOnUnknown` on serialize — Spriggit **silently drops unknown YAML fields** otherwise (no error, no warning). Always round-trip verify a new field: deserialize → re-serialize → grep for the field.
+
+## ESP Dependency Rule: Own Your Records
+
+**Never use `GetFormFromFile()` to borrow records from another mod.** Soft runtime dependencies silently break when that mod is disabled — the call returns `None` with zero error output and the feature simply doesn't work. This is nearly impossible to debug without reading the Papyrus log.
+
+**Rule**: Any record your mod needs must live in the ESP you're building. Copy the record (SNDR, SPEL, MGEF, WEAP, etc.) into your own plugin rather than referencing another mod's.
+- **Hard master dependencies** (MAST records): acceptable when overriding or extending a specific mod's content.
+- **Soft `GetFormFromFile()` dependencies on other mods**: almost always avoidable. Copy the asset, create your own record.
+- **Safe exception**: `Skyrim.esm` and the base game masters are always loaded — referencing their FormIDs is fine.
 
 ## Safety Rules
 
@@ -167,17 +260,23 @@ Hooks in `.claude/settings.json` enforce these automatically:
 - Any bash command referencing plugin/archive files
 
 ### General rules
-- **Always review changes before applying** -- this is a delicate install
+- **Always review changes before applying** -- modded installs are delicate
 - Never modify ESP/ESM files directly -- use xelib programmatically or Spriggit
-- Vortex manages load order -- direct edits to loadorder.txt/plugins.txt may be overwritten by Vortex
-- User is knowledgeable about Skyrim modding and INI settings
+- Vortex manages load order -- direct edits to loadorder.txt/plugins.txt may be overwritten
 
 ### Safety improvement loop
-After every session, near-miss, or unexpected outcome, evaluate whether a new hook, expanded protection, or knowledgebase entry could have prevented or caught the issue. Propose new hooks when a pattern of risk emerges -- not reactively after damage, but proactively when you notice a gap. Document proposed hooks in the "Hook Candidates" section of `KNOWLEDGEBASE.md` even if not immediately implemented.
+After every session, near-miss, or unexpected outcome, evaluate whether a new hook, expanded protection, or knowledgebase entry could have prevented or caught the issue. Propose new hooks when a pattern of risk emerges -- proactively when you notice a gap. Document proposed hooks in the "Hook Candidates" section of `KNOWLEDGEBASE.md`.
 
 ### Audit trail
 - Every file edit is auto-backed up to `.claude/backups/` with timestamp
 - An audit log at `.claude/backups/AUDIT_LOG.txt` records every file touched, when, and by which tool
+
+### Iteration snapshots (standing process — do not skip)
+Mod development requires many experimental iterations. Without snapshots, reverting to a known-good state means reconstructing code from memory or entangled transcript turns.
+1. **Before any experimental change**, copy the current `.psc` source files to `.claude/backups/<descriptive-name>/` (e.g. `known-good-pre-stagger/`). This is the rollback point.
+2. **The auto-backup hook covers INIs only** — it does NOT capture `.psc`/`.pex`. Spriggit auto-backups capture the ESP on every deserialize, but not scripts.
+3. **After confirming a state works in-game**, snapshot both scripts and a Spriggit export to a dated `known-good/` folder, named descriptively (what works, not just the date).
+4. **"Restore from transcript" is a trap** — past-turn code is entangled with the bugs being fixed that same turn. Read it for reference; don't paste it forward blindly.
 
 ## Confidence Levels (Mandatory)
 
@@ -204,3 +303,67 @@ After every session, near-miss, or unexpected outcome, evaluate whether a new ho
 - [ ] Web-searched for known issues with this approach
 - [ ] Considered rollback path if the change breaks something
 - [ ] Evaluated whether this task reveals a gap in current hook coverage
+
+---
+
+## Core Modding Principle: Vanilla Game as Frame of Reference
+
+**Before implementing any mechanic — even a novel one — identify how vanilla Skyrim handles the closest equivalent and model the solution on that pattern.**
+
+Approaches disconnected from how the engine actually works lead to silent failures: Concentration stagger locks, script-cast stagger spells with no visible animation, ValueModifier Touch spells cast from static markers that don't deliver damage. The vanilla game is proof-of-concept. If vanilla doesn't do it that way, ask *why* before choosing your approach.
+
+**Practical process:**
+1. Identify the vanilla analogue (e.g. "bleed on weapon swing" → Bleeding Strikes / Bladesman perk)
+2. Find the MGEF/spell/mechanism vanilla uses
+3. Model your solution as closely as possible on that pattern
+4. Only diverge when the vanilla pattern genuinely cannot be adapted
+
+**Examples:**
+
+| Mechanic | Wrong (invented) | Vanilla-aligned |
+|----------|-----------------|-----------------|
+| Bleed on hit | ValueModifier MGEF on a Concentration enchantment | FireAndForget bleed spell cast per-swing (mirrors the Bleeding Strikes perk's per-hit application) |
+| Script stagger | Stagger-archetype FireAndForget spell via `Spell.Cast()` (no visible animation) | `PushActorAway(target, 1-3)` — physical stumble, proven engine behavior |
+| Stagger immunity | `ForceActorValue("Stagger", 0)` polling | AddPerk with a ModIncomingStagger ×0 entry |
+| Melee auto-fire prevention | Dispel in OnEffectStart | Strip the enchantment from the weapon form |
+
+---
+
+## Core Modding Principle: Native Engine Solutions First
+
+**Before writing any Papyrus workaround, ask: "How does the game already handle this?"**
+
+"Simple" in Skyrim modding means simple from the engine's perspective — not simple as code. A 3-line Papyrus hack that polls state every tick is NOT simpler than a 1-line `AddPerk()` call, because the perk is what the engine natively understands. Script-based polling fights the engine; native mechanisms work with it.
+
+**Rule:** Use the engine's own systems first. Papyrus is a supplement, not a replacement.
+
+| Problem | Script hack (wrong) | Native solution (right) |
+|---------|---------------------|-------------------------|
+| Stagger immunity | ForceActorValue polling | AddPerk with stagger resist entry |
+| Keeping magicka up | RestoreAV in a loop | Enchantment with 0 magicka cost |
+| Melee auto-fire prevention | Dispel in OnEffectStart | Strip enchantment from weapon form |
+| Hit detection | Papyrus distance checks | Engine collision (projectile/melee) |
+| Movement lock | Script position forcing | SetRestrained / Paralysis MGEF (note VR caveats — see KB) |
+
+---
+
+## Core Principle: Do Your Homework (Due Diligence Before Acting)
+
+**Do the amount of due diligence you need such that the user has to do as little trial-and-error and manual verification as possible.**
+
+- This does **NOT** mean cut corners, and does **NOT** mean skip steps where the user is genuinely needed (e.g. in-game VR testing only they can do).
+- It means: verify formats, read the actual files, research the established technique (web + Nexus), confirm tool capabilities, and de-risk uncertain steps with a cheap spike — *then* make the change.
+- **Catch CTD-class failures in tooling, not the headset** — cross-validate authored assets with an independent parser; don't trust same-tool readback.
+
+Every in-game test cycle costs the user real time. Burn your own tokens on verification so theirs aren't wasted on avoidable trial-and-error.
+
+---
+
+## Core Working Principle: Cognitive Co-Pilot, Not Order-Taker
+
+On every task, ask: **"what else is wrong here that nobody asked about?"** — and surface it. Don't just execute the stated request: find related issues, challenge assumptions, and suggest what the user hasn't thought of. The value here is **anticipation, not compliance**.
+
+Treat the user's examples as a **sample, not the spec.** When they name a few instances, enumerate and probe the broader *class* yourself:
+- Two failing FormIDs named → audit the whole record set, not just those two.
+- One timing bug found → check every analogous call for the same defect.
+- "X doesn't work" after a parameter tweak → question whether the **mechanism itself is wrong**, not just the number (e.g. a knockback that needs a *Knock Down* flag, not more Force).

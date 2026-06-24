@@ -1,10 +1,14 @@
-# Skyrim Modding Knowledgebase
+# Skyrim Modding Knowledgebase (SE / AE / VR)
 
-A living document of quirks, gotchas, and hard-won lessons about Skyrim modding. Originally built on a Skyrim VR install, but most content applies to all versions (SE, AE, VR, LE). VR-specific items are marked with **(VR)** inline. Everything here was either discovered through debugging or verified via web research. Always consult this before making changes.
+A living document of quirks, gotchas, and hard-won lessons about Skyrim modding (SE / AE / VR). Everything here was either discovered through debugging or verified via web research. VR-specific behavior is called out as such. Always consult this before making changes.
 
 ---
 
 ## Papyrus Scripting
+
+### Log Noise (Not Bugs)
+
+**"VM is freezing..." / "VM is frozen"** — These lines appear in **every** Papyrus log on normal game exit and save. They are not a crash, not a script error, and have no diagnostic value. Ignore them completely when troubleshooting.
 
 ### Script Lifecycle
 
@@ -79,7 +83,7 @@ A living document of quirks, gotchas, and hard-won lessons about Skyrim modding.
 - `@UNAPPLYSPELL` removes the applied effect. Equivalent to `RemoveSpell()` — NOT `DispelSpell()`, since PI primarily uses this for ability-type spells which DispelSpell excludes.
 - `Spell.Cast()` CAN stack effects if called multiple times. `AddSpell()` for abilities CANNOT stack.
 
-### PlayIdle() and Animations
+### PlayIdle() and Animations in VR
 
 - `PlayIdle()` on the player is unreliable in VR. VRIK overrides the upper-body skeleton via IK from controllers.
 - Even if the idle fires, VRIK fights the pose on head and arms in real-time.
@@ -96,6 +100,16 @@ A living document of quirks, gotchas, and hard-won lessons about Skyrim modding.
 - The formID parameter is the **local** FormID (without the load-order prefix).
 - Returns `None` if the plugin isn't loaded — **always check before casting**.
 - Form ID must include `0x` prefix (e.g., `0x0001ABCD`).
+
+### ESP Dependency Rule: Own Your Records
+
+**Never use `GetFormFromFile()` to borrow records from another mod.** Soft runtime dependencies (`GetFormFromFile("SomeMod.esp")`) silently break when that mod is disabled, uninstalled, or load-order shifted — the call returns `None` with no error until the feature simply doesn't work.
+
+**Rule**: If you need a record (SNDR, SPEL, MGEF, etc.) from another mod, copy it into the ESP you're actively developing. Create your own version of the record in the ESP you're actively developing and reference that instead.
+
+- Hard master dependencies (listed in MAST records) can't always be avoided — they're acceptable when you're overriding or extending a specific mod's content.
+- Soft `GetFormFromFile()` dependencies on other mods are almost always avoidable: copy the WAV/record into your own ESP.
+- **Exception**: `Skyrim.esm` and the game's core master files — always safe to reference by FormID since they're always loaded.
 
 ### Magic Effect Lifecycle
 
@@ -187,9 +201,7 @@ A living document of quirks, gotchas, and hard-won lessons about Skyrim modding.
 
 ---
 
-## Version-Specific Differences
-
-> This section documents known behavioral differences across Skyrim versions. Most was discovered on VR but the patterns are useful when porting between any versions.
+## VR vs SSE Differences
 
 ### Engine Foundation
 
@@ -231,7 +243,7 @@ A living document of quirks, gotchas, and hard-won lessons about Skyrim modding.
 - Standard SE `PlayerCamera` interactions may not function identically
 - `Game.ShakeCamera()` adds noise to the third-person camera node — in VR this is mostly inert (minor artifacts at best, nauseating at worst). Generally safe to leave in.
 
-### Player Control Functions
+### Player Control Functions in VR
 
 **CORRECTED + VERIFIED from reference VR mod (`JudgementCutEnd.esp`):**
 
@@ -259,6 +271,7 @@ A living document of quirks, gotchas, and hard-won lessons about Skyrim modding.
 - Off: fixes some UI problems but creates visible darker/lighter seam between eyes
 - On: fixes visual seam but breaks UI in some configurations
 - Core tension between VR visual requirements and UI rendering
+- Community Shaders has known broken UI issues in VR
 
 ### Weather
 
@@ -280,6 +293,18 @@ A living document of quirks, gotchas, and hard-won lessons about Skyrim modding.
 - Locomotion: teleport vs smooth (VR-specific)
 - Hand-based item interaction (picking up, holding, throwing via HIGGS)
 - Motion archery and melee (hand gestures trigger attacks)
+
+### VR Playroom
+
+- Scripts running in VR playroom cause incompatibilities
+- Papyrus Tweaks NG pauses non-VR-playroom scripts until player exits
+
+### OpenComposite / OpenXR
+
+- Skyrim VR ships with OpenVR (SteamVR) support
+- OpenComposite bypasses SteamVR → directly to OpenXR
+- Significant performance gains, reduced CPU/GPU load
+- Especially beneficial for Quest 3 via Virtual Desktop
 
 ### Mod Framework VR Status
 
@@ -377,6 +402,20 @@ This applies to `getValue`, `setValue`, `setFloatValue` — all path-based funct
 - "Copy as override" uses the highest override visible to the target file (based on its masters)
 - ModGroups hide non-winning overrides from conflict detection (prevent false positives)
 
+### ESP Removal and Existing Saves (CRITICAL)
+
+**NEVER remove/disable an ESP from the load order on an existing save.** Removing an ESP shifts all downstream ESPs' load order positions. Every ESP after the removed one gets a new load order index, which resets its quest stages, script state, and alias references in the save — as if freshly installed. With 700+ plugins, this is catastrophic.
+
+**Lobotomize instead:** Keep the ESP in the load order (maintains position stability) but strip its functionality:
+1. Remove compiled scripts (.pex files from `Data/Scripts/`)
+2. Disable SKSE plugins (.dll → .dll.disabled)
+3. Disable SPID distribution files (.ini → .ini.disabled) if applicable
+4. ReSaver clean to remove orphaned script instances (with .pex gone, they won't re-create)
+
+The ESP remains as a hollow shell. Only suggest removing ESPs when the user is starting a new game.
+
+*Source: direct experience — the lobotomy approach is confirmed working.*
+
 ### BSA/BA2 Archive Load Order
 
 **Priority (highest to lowest):**
@@ -460,10 +499,19 @@ This applies to `getValue`, `setValue`, `setFloatValue` — all path-based funct
 - `abPreventEquip` flag in `UnequipItem` doesn't work on NPCs
 - `ForceThirdPerson`/`ForceFirstPerson` can't determine current camera mode
 - Forcing view change causes immediate revert
+- Bashing costs no stamina in vanilla Skyrim VR (infinite stagger exploit)
 
 ### SKSE Plugin Version Compatibility
 
-SKSE plugin updates can break backward compatibility. When troubleshooting, check for `does not match existing signature` errors in Papyrus logs — this usually means a mod was compiled against a different SKSE plugin version than what's installed. Rolling back to the previous version of the SKSE plugin often resolves the issue.
+**PapyrusTweaks NG v4.1.1 (Oct 2025) breaks NPC dialogue in VR.** The newer version's `ValidationSignaturesHook` and `AttemptFunctionCallHook` cause NPC dialogue options to never appear — NPC speaks their greeting but the player choice menu doesn't show. **Use the stable 2023 version instead.** Symptom: NPC speaks but dialogue menu never opens; Papyrus log shows many `Unbound native function` and `does not match existing signature` errors at load time.
+
+**po3_PapyrusExtender updates can break backward compatibility.** The March 2025 update changed function signatures for `PO3_SKSEFunctions`, causing mods compiled against older versions to fail with "does not match existing signature" errors. Functions like `GetSkinColor`, `GetHairColor`, `GetAllSpellsInMod`, `ToggleChildNode`, `ResetActor3D` all affected.
+
+### Engine Fixes Available
+
+- **Engine Fixes VR**: tree LOD visibility, BSFadeNode offset corrections, volume settings persistence
+- **Poached Bugs VR**: ports Scrambled Bugs fixes to VR (spellcasting, texture, weapon issues)
+- **Papyrus Tweaks NG**: script execution fixes, VR playroom script pausing — **use 2023 version, NOT v4.1.1** (see above)
 
 ---
 
@@ -481,6 +529,50 @@ SKSE plugin updates can break backward compatibility. When troubleshooting, chec
 - Serialize: `spriggit serialize --InputPath "Data/Mod.esp" --OutputPath "/tmp/output" --GameRelease SkyrimSE --PackageName Spriggit.Yaml --PackageVersion "0.40.0"`
 - Deserialize: `spriggit deserialize --InputPath "/tmp/yaml_dir" --OutputPath "Data/Mod.esp"` (reads meta from spriggit-meta.json)
 - `--GameRelease` is only for serialize, NOT deserialize
+- **Use `-u` / `--ErrorOnUnknown` on serialize.** It makes Spriggit throw on unknown
+  fields/records instead of dropping them silently — directly mitigates the silent-drop
+  issue below. Make it the default for our workflow.
+
+### ✅ Spriggit round-trip is byte-stable — verified 2026-05-18
+- A controlled no-op round-trip (`serialize → deserialize unchanged → serialize`) of the
+  a test ESP produced a **byte-for-byte identical file**; an unmodified ESP
+  round-trip to identical YAML with `:Skyrim.esm` references intact. Spriggit serializes
+  exactly what the YAML says — it does NOT invent master-attribution corruption.
+- The earlier belief that "Spriggit corrupts master prefixes on round-trip" was a
+  **misdiagnosis**. The real culprit for re-mastered references (`:Skyrim.esm`
+  → `:YourMod.esp`) can be an **over-broad ModKey remap during a manual mod split** —
+  a blanket plugin-name replace that sweeps up legitimate field references.
+- **Rule**: trust Spriggit round-trips. The real risk is *bulk ModKey/master remap*
+  operations (mod splits, find-replace on YAML). Inventory cross-references (FormID +
+  target master, per field) before and after any such operation and diff them.
+
+### Tool: `tools/esp-verify-wrapper.sh` — cross-reference integrity guard
+Catches the silent re-mastering / dropped-reference corruption class. Tool-agnostic
+(guards Spriggit, xEditLib, CK, manual YAML edits). Snapshots are stored outside the
+game dir (`~/.esp-verify-snapshots`), so it never trips the edit hooks.
+- `bash tools/esp-verify-wrapper.sh snapshot Data/Mod.esp [...]` — before a risky op
+- `bash tools/esp-verify-wrapper.sh verify   Data/Mod.esp [...]` — after; exit 1 +
+  loud report on any reference whose target master changed or that vanished
+- `bash tools/esp-verify-wrapper.sh guard Data/Mod.esp [...] -- <command...>` —
+  snapshot → run command → verify, one shot
+**Standing practice**: run `snapshot` before, `verify` after, ANY bulk ESP operation
+(mod split, plugin rename, master-list edit, YAML find-replace). Verified 2026-05-18
+to catch re-mastered / dropped references. If a change is intended, re-run
+`snapshot` to accept it as the new baseline.
+
+### ⚠️ Spriggit silently drops unknown YAML fields (CRITICAL)
+- **Behavior**: If a YAML field name doesn't match a known Mutagen property, Spriggit deserialize drops the data with **zero error, zero warning, zero log line**. Deserialize returns success and the resulting ESP simply lacks that field.
+- **Failure mode**: You can edit YAML, deserialize, deploy, load in-game — everything appears fine — and only notice when in-game behavior tied to that field doesn't manifest. Easily hours of mis-diagnosis.
+- **Mandatory verification workflow when writing a NEW YAML field**:
+  1. Edit YAML and deserialize to a temp ESP
+  2. Re-serialize that temp ESP back to YAML
+  3. Grep the re-serialized YAML for the field you just wrote
+  4. If absent → field name is wrong (or the field doesn't exist for that record type). Try alternates.
+- **Finding the correct Mutagen property name**: Inspect the DLL strings in your Spriggit install's `Mutagen.Bethesda.Skyrim.dll` (under the dotnet tools store, e.g. `~/.dotnet/tools/.store/spriggit.cli/<ver>/.../Mutagen.Bethesda.Skyrim.dll`). Use `grep -aoE "(get|set)_[A-Z][a-zA-Z]+" <dll> | sort -u | grep -i <pattern>` to enumerate property accessors.
+- **Known name traps**:
+  - MGEF Impact Data Set link → `ImpactData` (NOT `ImpactDataSet`, despite the linked record being IPDS)
+  - xEdit's display name often diverges from Mutagen's property name — always verify against Mutagen, not xEdit
+- **Discovered** during an MGEF clone for a custom-effect fix.
 
 ### Caprica Compilation
 - Must run from `Data/Scripts/Source/` directory and use relative paths
@@ -491,7 +583,7 @@ SKSE plugin updates can break backward compatibility. When troubleshooting, chec
 
 ---
 
-## VR Controller Input Detection (VR Only)
+## VR Controller Input Detection
 
 ### SKSE Input API — DOES NOT WORK for VR Controllers
 - `Input.GetMappedKey("Right Attack/Block")` returns **-1** in VR — VR controllers are not mapped through DirectInput keycodes
@@ -503,7 +595,7 @@ SKSE plugin updates can break backward compatibility. When troubleshooting, chec
 ### VRIK API — THE Correct Method for VR Input
 All functions are native globals on the `VRIK` scriptname (`Data/Scripts/VRIK.psc`).
 
-**Button Press Detection (confirmed working in VR):**
+**Button Press Detection (all confirmed working on Quest 3 via Virtual Desktop + OpenComposite):**
 - `VRIK.VrikIsTriggerPressed(Bool onLeft)` — **WORKS** clean press/release, zero false positives
 - `VRIK.VrikIsGripPressed(Bool onLeft)` — **WORKS**
 - `VRIK.VrikIsThumbstickPressed(Bool onLeft)` — **WORKS**
@@ -512,7 +604,7 @@ All functions are native globals on the `VRIK` scriptname (`Data/Scripts/VRIK.ps
 - Pass `false` for right hand, `true` for left hand
 
 **Touch Detection (capacitive):**
-- `VRIK.VrikIsTriggerTouched(false)` may return **TRUE at rest** on some headsets — finger resting on capacitive trigger. Use `Pressed` not `Touched` for intentional input.
+- `VRIK.VrikIsTriggerTouched(false)` returns **TRUE at rest** on Quest 3 — finger resting on capacitive trigger. Use `Pressed` not `Touched` for intentional input.
 
 **Position Tracking (confirmed working):**
 - `VRIK.VrikGetHandX/Y/Z(Bool onLeft)` — world-space hand position, updates in real-time
@@ -520,7 +612,7 @@ All functions are native globals on the `VRIK` scriptname (`Data/Scripts/VRIK.ps
 - Positions are real tracking data; change when player moves
 
 **Controller Info:**
-- `VRIK.VrikGetControllerType()` — returns controller type enum (0 = Rift/Oculus, etc.)
+- `VRIK.VrikGetControllerType()` — Quest 3 reports as **0 (Rift/Oculus)**
 
 **Axis Values:**
 - `VRIK.VrikGetAxisX/Y(Bool onLeft)` — thumbstick X/Y positions
@@ -528,6 +620,8 @@ All functions are native globals on the `VRIK` scriptname (`Data/Scripts/VRIK.ps
 **Known Issues:**
 - `VrikGetFingerPos` has a **signature mismatch** with current VRIK VR build — function will not be bound. All other VRIK functions work fine.
 - Duration functions (`VrikTriggerPressDuration`, etc.) — not tested but likely work
+
+**VRIK "Adjust Held Weapon Positions" causes concentration beam angle offset.** In VRIK Options, the setting "Adjust Held Weapon Positions" subtly rotates held weapons to fit better in the hand. For normal melee weapons this is fine. For a staff firing a concentration beam, it deflects the projectile origin ~15 degrees off-center, making the beam fire noticeably to one side instead of straight. **Fix: disable "Adjust Held Weapon Positions" in VRIK Options.** The beam then fires exactly along the controller direction via MISVR. This is a per-save MCM setting, not stored in vrik.ini.
 
 **Usage Pattern (from POS3/POS4 mods):**
 ```papyrus
@@ -554,18 +648,48 @@ This gives the horizontal direction from body center to sword hand — accurate 
 
 ### What WORKS
 - **Direct weapon swap**: `Actor.UnequipItem(weaponA, false, true)` → `Actor.EquipItem(weaponB, false, true)` — confirmed working in VR, weapon visually changes in hand
+- **Weapon swap UX caveat**: Force-equipping/unequipping during powers causes a visible game stutter (brief pause). **Bad modding practice** — never force swap the player's equipped weapon. Instead, check if the required weapon is equipped and refuse activation if not.
 - **Weapon.SetReach(float)** — the value IS respected by the game independently of mesh (confirmed with whip mod). But **only takes effect on game restart**, not during gameplay.
 - **Weapon.GetReach() / SetReach()** — SKSE native functions, no documented upper cap
+- **NetImmerse.SetNodeScale(Caster, "WEAPON", scale, false)** — scales the WEAPON skeleton bone and all children (including equipped weapon mesh). Engine renders at render framerate. One Papyrus call to extend, one to retract. Zero per-tick visual work. **Confirmed working in VR** for instant weapon scaling. Requires a visible weapon to be equipped (scaling invisible = still invisible).
+- **`Caster.QueueNiNodeUpdate()`** — call after SetNodeScale to flush the scale change to the render pipeline.
 
 ### What DOES NOT WORK at Runtime
 - **Weapon.SetModelPath(string)** — changes the internal path but does **NOT update the visual** of an already-equipped weapon. Even unequip→SetModelPath→re-equip cycle just shows disappear/reappear with the same model.
+- **Weapon.SetEquippedModel(Static)** — native SKSE function (Weapon.psc line 55). **CONFIRMED DESTRUCTIVE in VR.** Called correctly with valid Static forms — no visual change, but actively corrupts the weapon's equipped model reference. Combined with `QueueNiNodeUpdate()`, causes the weapon to **disappear from the player's hand entirely**. The weapon shows as equipped in inventory but is invisible/gone in-world. Only fixable by manually unequipping and re-equipping. **NEVER USE THIS FUNCTION.**
 - **SetReach at runtime** — value changes but hit detection range doesn't update until game restart
 - **Effect Shader via GetFormFromFile** — `Game.GetFormFromFile(0x00010DDD, "Skyrim.esm") as EffectShader` returned None. FormID may be wrong or form type mismatch.
+- **`ModAV("SpeedMult", -70)` for VR locomotion slowdown** — has NO effect on VR thumbstick movement. User confirmed no slowdown felt at all. VR locomotion bypasses SpeedMult.
+- **`ModAV("CarryWeight", -99999)` for VR locomotion slowdown** — WORKS. Over-encumbrance (carry weight exceeded) does slow VR thumbstick movement. Use this instead of SpeedMult.
 
-### Not Yet Tested
-- `Weapon.SetEquippedModel(Static model)` — different SKSE function from SetModelPath, takes a Static form. May work where SetModelPath failed.
-- `VisualEffect.Play()` on player/weapon — overlay VFX
-- Art Object attachment via PO3_SKSEFunctions
+### VR Weapon Collision / Reach
+- **WEAP Reach field does NOT control VR weapon collision distance.** HIGGS/VRIK use the NIF's Havok physics collision geometry to determine hit detection range, not the Reach value.
+- **To extend weapon collision in VR**: the weapon NIF needs extended physics collision geometry — a longer `bhkConvexVerticesShape` or a chain of physics bones with constraints (e.g., Fettered Fragments' 17-bone `Fragment_0-16` chain). Standard weapons use `bhkBoxShape` matching the visual mesh.
+- **The `_HDTSw` dummy armor trick** does NOT extend reach on its own. The primary reach extension comes from the weapon NIF's physics bone chain.
+- **Creating extended-reach VR weapons requires NifSkope/Blender** to modify the NIF's physics structure.
+
+### OL_WEAPON Projectile Routing — Damage Through Extended Weapon Collision
+
+**Root cause**: Any projectile (spell or arrow) that physically contacts a Havok collision shape with layer `OL_WEAPON` (layer 5) has its damage routed to the weapon's owner-actor. This is an engine-level routing step that occurs before SpellAbsorption, MagicResist, block, and all Papyrus event hooks — none of those mechanisms can intercept it.
+
+**Consequence for extended custom weapons**: A weapon NIF with a long `bhkCapsuleShape` layered `OL_WEAPON` (e.g., a 71.43 Havok unit / ~5000 game unit beam) makes the player take full spell damage from any projectile contacting any part of the capsule, regardless of distance from the hand.
+
+**Approaches that do NOT fix it** (confirmed wrong path):
+- `ModAV("SpellAbsorption", …)` — "SpellAbsorption" is not a valid Papyrus AV name; generates log errors on every call. Even if it were valid, SpellAbsorption gates the *spell-cast-at-actor* pathway, not the *projectile-hits-OL_WEAPON-shape* routing.
+- `MagicResist` buff — same wrong path; applies to direct spell effects, not collision-routed damage.
+- Absorb MGEF, Atronach Stone perk — operate on the spell-cast path, not the OL_WEAPON path.
+- Po3 `OnProjectileHit` event — **not available in VR**. Po3 VR only exports projectile property accessors (GetProjectileSpeed, etc.), no event handlers.
+
+**WeaponCollision.dll (ijwzac/WeaponCollisionVR) cannot help**: The plugin uses hardcoded per-weapon-type reach values (sword=90, greatsword=100, axe=70 game units, scaled by `WeaponRangeMultiply` INI setting). It reads neither the NIF collision geometry nor the weapon record's Reach field. Visual debug (`DebugShowPlayerWeaponRange=true`) confirms the parry line is always ~90 units regardless of equipped weapon. A custom NIF capsule of 5000 units is completely invisible to it.
+
+**Clean fix path (bookmarked, not yet implemented)**: Fork `github.com/ijwzac/WeaponCollisionVR` (Apache 2.0, explicitly fork-permitted). Add ~10 lines: INI flag `bUseWeaponLengthOverride = true` + a custom keyword on the weapon form → when that keyword is present, replace the hardcoded sword line length with a configurable value (e.g., 5000 units). Build requires Visual Studio + CommonLibSSE-NG + CMake 3.21+ + C++23. Confidence: 70% (risks: VR-specific CommonLibSSE-NG quirks, SKSE update breakage, maintenance burden).
+
+**Accepted workaround**: Frame spell vulnerability as a deliberate design tradeoff — extending the blade exposes the player; retracting (releasing trigger) restores normal hit detection.
+
+### VR Weapon Draw State
+- **`DisablePlayerControls(abFighting=true)` causes weapon to sheathe** when `EnablePlayerControls` is called afterward. The engine resets weapon drawn state when the fighting control flag is toggled.
+- To freeze the player while preserving weapon drawn state, use: `DisablePlayerControls(true, false, false, false, false, false, true, false, 0)` — disables movement and menu, but NOT fighting. Combined with `SetDontMove(true)` for VR thumbstick freeze.
+
 
 ### Reach Formula (Vanilla, without Precision)
 - `fCombatDistance(141) × NPCScale × WeaponReach`
@@ -574,9 +698,24 @@ This gives the horizontal direction from body center to sword hand — accurate 
 - SetReach(50.0) ≈ 7050 units ≈ 106m
 - **Precision does not exist for VR** — weapon collision is handled by HIGGS/VRIK
 
+### PLANCK — VR melee hit detection + runtime settings API
+
+PLANCK replaces vanilla/Precision melee hit detection in VR. Config: `Data/SKSE/Plugins/activeragdoll.ini`.
+
+**Papyrus API** — `planck.psc` (`ScriptName PLANCK Hidden`; source at `Data/Source/Scripts/` — a DIFFERENT dir from `Data/Scripts/Source`, so add it to Caprica `--import` to compile against it):
+- `PLANCK.GetSetting(String name)` / `PLANCK.SetSetting(String name, float value)` — global native; read/modify any numeric `activeragdoll.ini` setting at runtime. `GetSetting` returns exactly `-2.71828` if the name doesn't exist (typo check).
+- Also `AddIgnoredActor`, `GetLastHitNodeName` (call inside `OnHit`), aggression-topic setters.
+
+**Hit-speed gates** (confirmed 2026-05-17 to be read **per-hit** — `SetSetting` changes take effect live, no restart/cell-load):
+- `hitSwingSpeedThreshold` (def 5.0) — min impact-point velocity for a swing to register
+- `hitStabSpeedThreshold` (def 2.5) — same for stabs
+- `hitRequiredHandSpeedRoomspace` (def 1.5) — the hand must be moving this fast; "walk the weapon into an enemy without moving your hand" won't register otherwise
+
+Setting all three to **0** → any contact registers a melee hit regardless of swing speed. The setting is global (all the player's melee); toggle to 0 for a weapon-state and restore on exit to scope it per-weapon. Useful for an extended-blade weapon that should damage on any contact (toggle the gates from the weapon's script and restore on exit). This is the engine-native "weapon damages on any touch" fix — PLANCK collision runs at engine framerate, no script-sampling gap.
+
 ---
 
-## Papyrus Debugging
+## Papyrus Debugging in VR
 
 ### Debug.Notification() Limitations
 - Skyrim displays **one notification at a time** with ~5 second delay before the next in queue
@@ -585,7 +724,7 @@ This gives the horizontal direction from body center to sword hand — accurate 
 - `Debug.MessageBox()` is **non-blocking** in Papyrus — fires and script continues immediately, does NOT wait for OK
 
 ### Debug.Trace() — The Correct Logging Method
-- Writes directly to `Documents/My Games/Skyrim VR/Logs/Script/Papyrus.0.log` (or `Skyrim Special Edition` for SE/AE)
+- Writes directly to `Documents/My Games/Skyrim VR/Logs/Script/Papyrus.0.log`
 - No queue delay — logged at time of execution
 - Use `[TAG]` prefixes for easy grepping: `Debug.Trace("[MYMOD] message")`
 - Use `Utility.GetCurrentRealTime()` for timing measurements
@@ -656,5 +795,587 @@ A living list of potential safety hooks identified during work. Evaluated but no
 
 ---
 
-*Last updated: 2026-03-28*
+---
+
+## VR Papyrus — Confirmed Findings
+
+### Player Movement
+- **`SetPosition()` on the player triggers a cell reload** in Skyrim VR, causing a loading screen even for short distances. Never use it for player teleportation.
+- **`TranslateTo()` at extreme speed (100,000+) is effectively instant** and does NOT trigger a cell reload. Works well for flash-step/teleportation in VR. The original camera smoothly follows but at 100K speed it's imperceptible.
+- **`MoveTo()` on the player** also triggers cell reload behavior similar to SetPosition. Avoid for short-distance movement.
+- **`Game.FadeOutGame()` + `SetPosition`** is a terrible VR teleport method — the cell reload causes a multi-second black screen followed by landscape flickering as assets reload.
+
+### Papyrus Tick Rate with Heavy Plugin Load
+- **`Wait(0.1)` rounds to ~0.5-1 second actual** with 700+ plugins. The Papyrus VM is heavily throttled.
+- **All Papyrus-positioned objects are limited to ~1Hz visual update rate.** Neither `SetPosition()` per-tick nor `StopTranslation()` + `TranslateTo()` per-tick can achieve smooth real-time tracking.
+- **`TranslateTo()` at moderate speed (e.g. 8000 u/s) gives engine-interpolated smoothness** between Papyrus ticks, but objects still visibly "trail" behind the intended position by ~0.5s.
+- **`SetPosition()` gives jerky teleporting** — objects snap to new positions with visible jumps.
+- **For smooth real-time visual tracking, use engine-level approaches** like `NetImmerse.SetNodeScale()` (one call, engine handles rendering) rather than per-tick Papyrus object positioning.
+- **`PlaceAtMe()` creates objects VISIBLE at caster's feet** by default. With large `SetScale()` values, a huge object flickers visibly at the player's feet. Fix: use `PlaceAtMe(form, 1, false, true)` — 4th parameter `abInitiallyDisabled=true` creates the object disabled. Then `SetPosition()` to correct location while invisible, then `EnableNoWait()`.
+- **Remove `Debug.Notification()` from tight polling loops** — notification queue is slow and adds overhead per-tick.
+
+### PapyrusUtil in VR
+- **`miscutil.ScanCellNPCs()` can crash** PapyrusUtil.dll in VR with an access violation in `TESObjectREFR::SetParentCell`. Crash occurs when processing actors with invalid/missing cell references (e.g., a Goat with `ParentCell: ---`). Replace with `FindRandomActorFromRef()` loops for safer target finding.
+- **`papyrusutil.ObjRefArray()`** works fine in VR for dynamic arrays exceeding 128 elements (tested up to 270).
+
+### Targeting (TDM Replacement)
+- **`truedirectionalmovement` does not exist for VR.** All calls to `truedirectionalmovement.GetCurrentTarget()` must be replaced. The script name won't resolve at all — Papyrus logs "Cannot open store for class 'truedirectionalmovement', missing file?"
+- **`GetCombatTarget()`** only returns an actor when the player is in active combat (has attacked or been attacked). Returns None for passive/nearby enemies.
+- **`FindRandomActorFromRef()`** is truly random — it can return any actor in range regardless of direction, proximity, or hostility. To approximate "target what you're looking at," sample 30+ times and filter by `GetHeadingAngle()` (±60°), keeping the closest match.
+- **`GetActorBase().GetName()` returns empty** for leveled actors (trolls, bandits, etc.). Use `GetDisplayName()` instead for notification text.
+
+### Spell/Effect Architecture
+- **`Self.dispel()` on an ActiveMagicEffect only dispels THAT specific effect**, not the entire spell. If a spell has multiple effects (e.g., a spell with 8 effects from 8 MGEFs), dispelling one leaves the other 7 running with their summoned objects still visible. Use `actor.DispelSpell(spellForm)` to end all effects from a spell.
+- **GlobalVariable signals for cross-script communication** work reliably between ActiveMagicEffects, but globals are STICKY — if a signal is set when no handler is running, it persists until cleared. Always clear signal globals in `OnEffectStart` to prevent stale signals from previous casts triggering immediately.
+- **`RemoveSpell` does NOT fire `OnEffectFinish`** — use `DispelSpell` when cleanup logic exists in OnEffectFinish. (Previously known, reconfirmed.)
+
+### Object Spawning
+- **`PlaceAtMe()` + immediate `SetMotionType()` fails in VR** because 3D assets load slower than flatscreen SSE. The object's 3D isn't loaded yet when SetMotionType is called, producing "has no 3d, and so cannot have its motion type changed." Fix: wait loop checking `Is3DLoaded()` before calling `SetMotionType()`.
+- **Spawning 270 weapon objects** via PlaceAtMe in a single OnEffectStart works without crashing in VR, but takes several seconds. OnUpdate won't start until OnEffectStart completes.
+
+### Formation Math (object rings)
+- **`While i < 180` with `sin(i)/cos(i)` only creates a semicircle** (0°-180° covers right→bottom→left). For a full 360° ring of objects, use `While i < 360`.
+- **Radius 1800 units (~25m) exceeds typical object render distance** in VR — swords at the far side won't be visible. Keep formation radii under ~1300 units for reliable visibility.
+
+### Decompilation (Champollion)
+- **Champollion cannot decompile all bytecode.** Some code blocks decompile as empty if/elseif branches with only debug line number comments. The assembly output (`-a` flag) shows these as genuine `jmp` instructions with no code between them — the blocks may have been empty in the original compiled source (code commented out before compilation), not a decompiler bug.
+- **Champollion produces variable shadowing** that Caprica rejects. Inner scope `Float cosi` conflicts with outer scope `Float cosI` (Papyrus is case-insensitive). Remove the inner redeclaration.
+- **`OnPlayerFastTravelEnd` on ActiveMagicEffect** compiles in the original compiler but Caprica rejects it as "Non-native scripts cannot define new events." Safe to remove — OnEffectFinish handles cleanup.
+- **Compilation stubs** are needed for type references (e.g., `zzz_getClosetTgt`) when compiling scripts that use those types as properties. Create minimal stubs with function signatures, compile, then delete the stubs.
+
+### Skyrim Sound System: SOUN vs SNDR (CRITICAL — do not confuse)
+
+**Every playable sound requires TWO records, not one:**
+- **SNDR** (Sound Descriptor) — stores WAV file paths, OutputModel, Category. Cannot be played directly from scripts.
+- **SOUN** (Sound Marker) — a thin wrapper that references one SNDR. This is what the Papyrus `Sound` type maps to.
+
+**The Papyrus `Sound` type = SOUN records only.** `GetFormFromFile(id, "plugin.esp") as Sound` silently returns `None` if `id` points to a SNDR instead of a SOUN. No error in Papyrus log. Total silence, no indication of failure.
+
+**Correct wiring pattern** (confirmed from a working mod's Spriggit serialization):
+```
+SNDR record (e.g. FormKey 49D076) ← holds WAV paths, category, output model
+SOUN record (e.g. FormKey 49D077) ← SoundDescriptor: 49D076:YourMod.esp
+Script: GetFormFromFile(0x49D077, "YourMod.esp") as Sound  ← uses SOUN FormID
+```
+
+**In Spriggit YAML**, SOUN records go in a `SoundMarkers/` folder:
+```yaml
+FormKey: 00085E:YourMod.esp
+EditorID: MySoundMarker
+SoundDescriptor: 000857:YourMod.esp
+```
+
+**Correct OutputModel for scripted action SFX**: `000EC7:Skyrim.esm` (`SOMStereoRad09000_verbSHOUTS`). This is the right output model for scripted action SFX. Do NOT use `0FD93D:Skyrim.esm` (`SOMStereoRad03000_verb`) — that's for ambient environmental emitters.
+
+**Correct Category for action SFX**: `0172A1:Skyrim.esm` (`AudioCategorySFX`). Do NOT use `01A0BD:Skyrim.esm` (`AudioCategoryMAG`) — that's specifically for magic effects audio.
+
+**WAV format**: 44100 Hz, 16-bit PCM. Sounds played positionally on a game object (`Sound.Play(objectRef)`) should be **mono**; stereo may not position correctly in 3D space.
+
+
+### Spriggit WEAP YAML Format (CRITICAL — invisible weapons if wrong)
+
+**`BasicStats` and `Data` sections have DIFFERENT fields.** Getting them swapped = invisible weapons (no mesh, no icon, record exists but renders nothing).
+
+Correct mapping (confirmed against working weapon records):
+- **`BasicStats:`** = `Value`, `Weight`, `Damage` (the "stat card" numbers)
+- **`Data:`** = `AnimationType`, `Speed`, `Reach`, `Flags`, `NumProjectiles`, `AnimationAttackMult`, `Skill`, `Stagger`, `Unused`, `Unknown2`, `Unknown3`
+
+**Required `Data:` subfields** (omitting any causes invisible/broken weapons):
+```yaml
+Data:
+  AnimationType: OneHandSword  # or TwoHandSword, etc.
+  Unused: 0x000000
+  Speed: 1.0
+  Reach: 1.0
+  Flags: []                    # or [CantDrop], [NonPlayable], etc.
+  NumProjectiles: 1
+  AnimationAttackMult: 1
+  Unknown2: 1061997773         # standard value from vanilla records
+  Unknown3: 0x000000000000000000000000
+  Skill: OneHanded             # or TwoHanded
+  Stagger: 0.5
+```
+
+**Other important fields for visible weapons:**
+- `Model.Data: 0x020000000000000000000000` — MODT subrecord, present in all working records
+- `ImpactDataSet: 013CAC:Skyrim.esm` — standard weapon impact (without this, no hit sounds/effects)
+- `DetectionSoundLevel: Normal` — affects sneak detection
+- `Critical:` section — include even with minimal values (`Damage: 1, PercentMult: 10, Flags: [], Unused2: 0x000000`)
+- `ObjectBounds:` — safe default: `First: -32768, -32768, -32768` / `Second: 32767, 32767, 32767`
+
+**Working minimal WEAP YAML template** (based on working weapon records):
+```yaml
+FormKey: XXXXXX:Mod.esp
+EditorID: MyWeapon
+ObjectBounds:
+  First: -32768, -32768, -32768
+  Second: 32767, 32767, 32767
+Name:
+  TargetLanguage: English
+  Value: My Weapon
+Model:
+  File: weapons\path\to\mesh.nif
+  Data: 0x020000000000000000000000
+EquipmentType: 013F45:Skyrim.esm
+Keywords:
+- 01E711:Skyrim.esm
+Description:
+  TargetLanguage: English
+  Value: ''
+ImpactDataSet: 013CAC:Skyrim.esm
+BasicStats:
+  Value: 100
+  Weight: 5.0
+  Damage: 12
+Data:
+  AnimationType: OneHandSword
+  Unused: 0x000000
+  Speed: 1.0
+  Reach: 1.0
+  Flags: []
+  NumProjectiles: 1
+  AnimationAttackMult: 1
+  Unknown2: 1061997773
+  Unknown3: 0x000000000000000000000000
+  Skill: OneHanded
+  Stagger: 0.5
+Critical:
+  Damage: 1
+  PercentMult: 10
+  Flags: []
+  Unused2: 0x000000
+DetectionSoundLevel: Normal
+```
+
+**Common EquipmentType FormIDs:**
+- `013F45:Skyrim.esm` — RightHand (one-handed weapons)
+- `013F42:Skyrim.esm` — BothHands (two-handed weapons)
+
+**Previous error**: Using `Critical.Flags: [OnDeath]` caused Spriggit parse error. Use `Flags: []` instead. `OnDeath` is valid in some records but may not be valid for Mutagen's CriticalData.Flag enum.
+
+### Spell Effect Area is in FEET (CRITICAL)
+- **Spell effect Area values are measured in FEET, not game units.** 1 foot ≈ 21.3 game units ≈ 30.5 cm.
+- Area=60 = 60 feet = ~18 meter RADIUS (36m diameter) — NOT 60 game units (~85cm).
+- Area=200 = ~61 meter radius. Area=3 = ~0.9m radius. Area=1 = ~0.3m radius.
+- For sword-width damage: Area=2-3 (about 60-90cm radius).
+- For wider effects (stagger aura, splash): Area=10-15 (~3-5m radius).
+- This affects ALL spell effects: damage, healing, cloak, area denial, etc.
+
+### ESP/Spriggit
+- **Spriggit requires `--PackageVersion` parameter** when `--PackageName` and `--GameRelease` are set, or it throws "PackageVersion needs to be set."
+- **A plugin's own records use a mod index equal to its master count** for `GetFormFromFile()` (an ESP with 5 masters uses index `0x05`; with 2 masters, `0x02`). Match the prefix to the master count or the lookup silently returns None.
+
+### ImageSpaceModifier
+- **`FadeToBlackHoldImod`** (Skyrim.esm FormID `0x0F756E`) fades the screen to black and holds. Can be applied at partial strength (e.g., 0.6) for dimming rather than full blackout.
+- **`ApplyCrossFade(strength)`** transitions gradually to the IMOD effect, vs `Apply(strength)` which snaps to it instantly.
+- **`FadeToBlackImod`** = `0x0F756D`, **`FadeToBlackBackImod`** = `0x0F756F` (fade back from black).
+
+---
+
+### Staff AnimationType, WNAM, and VR In-Hand Render
+
+**`AnimationType: Staff` causes visual blade inversion when using a sword NIF.** The staff skeleton orients the weapon bone differently than the sword skeleton. Result: blade appears held backwards. **Fix: apply a Y-axis rotation matrix to all child NiTriShape geometry nodes in the NIF.** This successfully corrects the inversion without breaking beam direction.
+
+**VRIK uses the 3rd-person weapon NIF *only when WNAM is null***. In Skyrim VR with VRIK active, the engine attaches the 3rd-person model (`MODL`) to the avatar hand bone — UNLESS the WEAP record has a `WNAM` (FirstPersonModel) field set to a STAT that wraps a different NIF. **Setting `WNAM = SomeStat` redirects the in-hand render to the STAT's NIF.** Confirmed: pointing `WNAM` at a STAT that wraps a vanilla 1st-person NIF causes the in-hand mesh to render that vanilla blade instead of the edited 3rd-person NIF. An earlier diagnostic (swapping the custom 1st-person NIF for an iron dagger had zero visual effect) was true *because WNAM was null at the time* — the auto-fallback 1st-person NIF lookup was indeed unused, but an *explicit* WNAM redirect is honored. **Practical rule: if you want VR in-hand to show NIF X, either edit the 3rd-person Model AND leave WNAM null, OR set WNAM to a STAT wrapping NIF X.** Both work; mixing them produces the override case where WNAM wins.
+
+**Inventory icon UI also follows WNAM.** When WNAM is null, the inventory icon viewport renders blank (or nothing reasonable). Setting WNAM to a valid STAT activates the icon. The rendered icon is the STAT's NIF (same one used for in-hand). To get a glowing inventory icon, point WNAM at a STAT wrapping a glowing NIF.
+
+**Skyrim does NOT auto-derive 1stperson NIF paths for custom directories.** The `1stperson<name>.nif` convention only works within recognized vanilla paths (e.g., `weapons/akaviri/`). Custom paths like `mymod/weapon.nif` → `mymod/1stpersonweapon.nif` do not resolve. Confirmed by diagnostic.
+
+**`AnimationType: Staff` IS required for hold-to-fire.** With `AnimationType: OneHandSword` (even with `WeapTypeStaff` keyword + `EnchantType: StaffEnchantment`), the engine does not trigger hold-attack-to-cast. AnimationType: Staff is the gate.
+
+**DAC-NG does NOT support concentration spells.** `_DynamicAnimationCasting/template.toml` explicitly states concentration spells "not working well right now" and provides `IgnoreConcentrationSpell = true` as a filter. Not viable for continuous beam.
+
+---
+
+### Staff vs Sword Skeleton: Blade Inversion + Grip Offset
+A sword NIF set to `AnimationType: Staff` renders the blade **inverted** (held backwards), because the
+staff skeleton orients the weapon bone differently than the sword skeleton.
+
+**Fix**: rotate every child NiTriShape geometry node 180 deg around **Y** (negates X and Z, reversing
+the forward-facing axis). Do this with PyFFI on an LE-format NIF, not by hand-patching bytes. Z- or
+X-rotation only spins the blade about its own axis and does not flip the tip direction.
+
+**Grip offset** comes from the skeleton bone positions:
+
+| Bone | X | Y | Z |
+|------|---|---|---|
+| WeaponSword | -11.89 | +1.92 | +6.67 |
+| WeaponStaff | 0.00 | -10.08 | +2.47 |
+
+The ~12-unit Y difference makes a staff grip feel "further back"; the ~12-unit X difference makes it
+feel "more centered." A root NIF translation to compensate has little effect in VR — VRIK's own grip
+system controls hand-to-weapon placement and is only adjustable via VRIK's in-game per-weapon-type
+calibration (not via `vrik.ini`, which has only a global `weaponAdjustment`).
+
+### Cell.GetNthRef is UNRELIABLE for Real-Time Actor Detection
+
+**`Cell.GetNumRefs(0)` + `Cell.GetNthRef(i, 0)` does NOT reliably return all loaded actors.** Confirmed via Papyrus logging: a Frost Troll being continuously hit by an engine beam (dozens of BEAM CONTACT events per second) appeared in only 2 out of 24 consecutive `GetNthRef` scans (~1s each). The ref count jumped from 17→18→19 when the troll appeared, suggesting dynamic load/unload of the ref list.
+
+**Fix: Use `PO3_SKSEFunctions.GetActorsByProcessingLevel(0)` instead.** Returns an `Actor[]` array directly — no ObjectReference casting needed, far more reliable. Processing level 0 = high (nearby, combat-active actors). Confirmed working: 14 actors found per tick in the same area where GetNthRef found 1-2.
+
+### Concentration Beam OnEffectStart Behavior
+
+**For Script archetype MGEFs on concentration spells:** `OnEffectStart` fires at engine framerate (dozens per second, not once). Each call is a separate script instance. This means:
+- Any `Spell.Cast()` or `RegisterForSingleUpdate()` inside `OnEffectStart` will spam
+- Use a script-level `bool` gate to prevent spam (set true on first fire, reset in `OnEffectFinish`)
+- `HasMagicEffect()` check races with Cast — the effect hasn't registered by the time the next `OnEffectStart` fires
+
+**For ValueModifier archetype MGEFs on concentration spells:** Continuous HP drain at engine speed. Magnitude is per-second.
+
+### Staff AnimationType Melee Auto-Fires Enchantment
+
+**When a Staff weapon physically contacts an enemy in melee, the engine auto-fires the staff's concentration enchantment.** This happens WITHOUT the player pressing the VR trigger. The beam visual appears and the beam's damage script fires.
+
+**Fix 1 (Papyrus — has 1-frame flash):** Check `VRIK.VrikIsTriggerPressed(false)` in OnEffectStart. If trigger not pressed, call `self.Dispel()`.
+
+**Fix 2 (Engine-level — prevents beam entirely):** Strip the enchantment from the weapon via `Weapon.SetEnchantment(None)` when trigger is released, restore with `Weapon.SetEnchantment(beamEnch)` when trigger is pressed. Modifies the base Weapon form. Confirmed working in VR — enchantment toggle propagates to equipped instance.
+
+### Useful Vanilla MGEFs / Reference FormIDs
+
+| Record | FormID | Purpose |
+|--------|--------|---------|
+| PerkBleedingDamage | 0C367A:Skyrim.esm | Vanilla sword bleed effect (Bladesman perk). ValueModifier/Health, HideInUI, FireAndForget/Touch. |
+
+### PushActorAway — Caller is the Source, Parameter is the One Pushed
+
+`Actor.PushActorAway(Actor akActorToPush, float afKnockbackForce)` — the **calling actor** is the source of the push; **akActorToPush** is the one who gets knocked back, away from the caller.
+
+- `Caster.PushActorAway(Target, 15.0)` → enemy flies away from player ✓
+- `Target.PushActorAway(Caster, 15.0)` → **player** flies away from enemy ✗ (common mistake)
+
+### Block Detection in Papyrus
+
+**No native `IsBlocking()` function exists** in Papyrus, SKSE, PO3, or DbSKSE. **Workaround:** `target.GetActorValue("IsBlocking")` returns 1.0 if actor is in blocking stance, 0.0 otherwise. This is an internal AV, not documented but functional.
+
+### DbSKSEFunctions — Projectile Collision Tracking
+
+`DbSKSEFunctions.psc` provides powerful projectile inspection:
+- `GetProjectileHitRefs(ObjectReference projectileRef)` — all refs a projectile hit
+- `GetProjectileCollidedLayerNames(ObjectReference projectileRef)` — collision layer names
+- `SetProjectileBaseCollisionRadius(Projectile, float)` — change beam width at runtime
+- `GetProjectileShooter(ObjectReference projectileRef)` — trace who fired
+
+Useful for diagnostics and potentially for detecting beam pass-through. Requires the projectile ObjectReference, not just the Projectile base form.
+
+### Core Modding Philosophy: Prefer Native Engine Solutions
+
+**Always prefer what the engine already knows how to do over Papyrus-based workarounds.** "Simple" in modding means simple from the engine's perspective — not simple as code.
+
+Examples of native vs. wrong approach:
+
+| Problem | Wrong (script hack) | Right (native) |
+|---------|---------------------|----------------|
+| Stagger immunity | `ForceActorValue("Stagger", 0)` every tick | AddPerk with stagger resist entry point |
+| Keeping Magicka up | `RestoreAV("Magicka", 9999)` in loop | Enchantment with 0 Magicka cost |
+| Preventing melee auto-fire | Dispel in OnEffectStart | Strip enchantment from weapon form (engine-level) |
+| Hit detection | Papyrus raycast | Engine collision (projectile/weapon) |
+| Movement restriction | Script-forced position | SetRestrained or Paralysis MGEF |
+
+**The question to always ask first:** "How does the game already handle this scenario?" Find that mechanism and use it. Only fall back to Papyrus scripting when no native mechanism exists — and even then, treat it as a supplement to engine behavior, not a replacement.
+
+This is the same principle as engine-primary hit detection: the engine is always doing more work more reliably than Papyrus can. Work with it, not around it.
+
+*Last updated: 2026-04-08*
 *Add new entries as they're discovered. Prefer verified facts over speculation.*
+
+---
+
+## Stagger & Bleed — Vanilla Alignment
+
+### Stagger-archetype spell cast from Papyrus → no visible animation
+
+`Spell.Cast(source, target)` where the spell wraps a `Stagger` archetype MGEF produces NO visible stagger animation on the target. Vanilla Skyrim never delivers stagger this way — vanilla staggers come from perk entry points on weapon hit, shout impact data, or spell impact data on projectile collision. None of those paths are accessible from a Papyrus `Spell.Cast()` call. Do not pursue this approach.
+
+**Practical substitute:** `Caster.PushActorAway(target, 1.0–3.0)` produces a physical stumble that reads visually as stagger. It fires reliably from script, scales with force, and matches the user's expectation of "hit = stumble."
+
+### Stagger MGEF on Concentration enchantment = stagger lock
+
+A `Stagger` archetype MGEF placed directly on a Concentration enchantment effect re-fires at ~90Hz in VR. The stagger animation restarts every frame before the previous one completes → infinite locked stumble. **Never put Stagger MGEFs on Concentration enchantments.** Deliver stagger per-swing via script (PushActorAway or a FireAndForget spell cast on dirChanged).
+
+### Vanilla bleed pattern
+
+Vanilla bleed (e.g. Bleeding Strikes perk, `0C367A:Skyrim.esm`):
+- Archetype: ValueModifier Health
+- CastType: FireAndForget
+- Duration > 0 (persists after application, ticks over time)
+- Delivered via perk entry point triggered on each weapon swing hit
+
+**Script analog for a beam/sweep weapon:** cast a FireAndForget bleed spell from your per-swing scan when `dirChanged == true` — one cast per swing per actor on the line. This maps directly to "each swing applies bleed," matching vanilla bleed semantics precisely.
+
+### `GetActorValue("IsBlocking")` is NOT a valid actor value
+
+Throws `Error: Actor value "IsBlocking" does not exist` on every call. This error has non-trivial VM overhead, especially in hot paths. **Use `Actor.GetAnimationVariableBool("IsBlocking")` instead** — this reads the animation graph variable and works correctly.
+
+### dirChanged early-return is the correct pattern for cheap polling loops
+
+When a 10Hz polling loop has swing-event work (tier knockback, bleed cast, form lookup), gate ALL of it behind `dirChanged` and exit early on `!dirChanged`. Most ticks during normal beam use will be `!dirChanged` (player holding the beam still). This collapses the per-tick cost to a direction dot product + return — effectively free.
+
+---
+
+
+## Papyrus Log — Generalizable Cleanup Lessons
+
+### "Cannot open store for class X" is benign orphan noise
+Lobotomized or removed mods leave `Cannot open store for class "..."` lines (orphaned script
+instances baked into save aliases). They are harmless. `bDisableMissingScriptError = true` in
+PapyrusTweaks.ini suppresses them at the log level; ReSaver can clean the underlying orphans.
+
+### GetTargetActor() == None is NOT a valid unbound-Self guard
+When an ActiveMagicEffect script's `Self` has no native binding (e.g. phantom AME instances created
+by an equip/ability re-broadcast), calling ANY native function on it logs `Unable to call X - no
+native object bound` BUT does NOT return None — it returns a non-None garbage value. So
+`If GetTargetActor() == None : Return` never triggers, and actually ADDS an error instead of
+suppressing one. This contradicts common Papyrus advice — trust the empirical log. There is no
+in-script way to make such a phantom instance short-circuit; fix it at the source (reduce the
+broadcast, detach the script at ESP level, or filter via an SKSE plugin), not in the script body.
+
+### po3 Papyrus Extender (VR) exports a subset
+`po3_papyrusextender_vr.dll` omits ~24 functions present in the SSE build (e.g. `Apply3DHavokImpulse`,
+`GetAllActiveEffectsOnActor`, `InstantKill`, `RemoveChildNode`). Mods calling them fail silently
+("Function X could not be found"). Check the VR fork's exports before assuming a po3 function exists.
+
+### PapyrusTweaks.ini on heavy modlists
+Useful keys: `iMaxOpsPerFrame` (raise from vanilla 100); `bDisableMissingScriptError` and
+`bDisableNoPropertyOnScriptErrorLogs` (suppress cosmetic version-skew noise); `bSpeedUpNativeCalls`
+(desync native calls from framerate — a real perf win); `iStackDumpTimeoutMS` (lower = stack dumps
+fire before a freeze times out, so you actually capture the offending stack). On a very heavy modlist
+the inflated Papyrus memory settings are load-bearing — see the VM page-policy note below.
+
+
+## Music System
+
+### MUSC vs MUST — Critical Distinction
+
+**MUSC = Music Type container.** What the music manager tracks on its priority stack. Has FNAM flags, PNAM (priority + ducking dB), WNAM fade duration, TNAM (track list). The Papyrus `MusicType` form type maps to MUSC.
+
+**MUST = Music Track Type.** Individual audio file entries. Referenced from MUSC.TNAM. They are NOT on the priority stack.
+
+`DbSKSEFunctions.GetMusicTypeStatus(form)` always returns `-1` if passed a MUST FormID — the manager doesn't track individual tracks. Always pass the MUSC container.
+
+Key MUSC FormIDs (Skyrim.esm): MUSCombat `0x0003418E`, MUSCombatBoss `0x000D777A`, MUSExploreMountain `0x000B9DCE`.
+
+### FNAM Flags on MUSC Records
+
+Bit 0 (0x01): Plays One Selection. **Bit 1 (0x02): Abrupt Transition** — switches immediately on trigger without waiting for current track's natural end. Bit 2 (0x04): Cycle Tracks. Bit 3 (0x08): Maintain Track Order. Bit 5 (0x20): DucksCurrentTrack (Mutagen naming; non-standard flag).
+
+Vanilla MUSCombat FNAM = `0x09` (PlaysOneSelection + MaintainTrackOrder). Without Abrupt Transition, the engine queues combat music but waits for the current exploration track to finish before switching. PM exploration tracks have no cue points, so this wait is 60-120+ seconds — meaning short fights end before combat music ever fires.
+
+**Correct Spriggit YAML flag names** for MUSC FNAM: `PlaysOneSelection`, `AbruptTransition`, `CycleTracks`, `MaintainTrackOrder`, `DucksCurrentTrack` (=0x20). Use these in Flags list. Do NOT try to set via xelib `setValue()` with a binary string — xelib writes the wrong value silently (verified: produced `0x34` instead of intended `0x0B`). Always use Spriggit YAML for FNAM edits on MUSC records.
+
+**Personalized Music - Remade.esp** overrides MUSCombat FNAM to `0x24` = CycleTracks + DucksCurrentTrack. This is intentional — PM's 88 combat tracks require CycleTracks to cycle through the pool. Removing CycleTracks causes the engine to fail to play any track and leaves the music manager in a deadlocked state (MUSCombat never becomes Playing, exploration music is cut by AbruptTransition, total silence results). Always preserve PM's flags when patching MUSCombat.
+
+Target FNAM for working MUSCombat with Abrupt Transition on top of PM's override: `0x26` = AbruptTransition + CycleTracks + DucksCurrentTrack. In Spriggit YAML:
+```yaml
+Flags:
+- AbruptTransition
+- CycleTracks
+- DucksCurrentTrack
+```
+
+### Papyrus MusicType.Add() Bypasses Engine Ducking (Critical)
+
+Calling `MusicType.Add()` from Papyrus and the engine's native combat trigger go through **different code paths**:
+
+- **Engine-native trigger**: Applies PNAM ducking → lower-priority types become inaudible (MUSCombat has PNAM ducking=100dB, effectively muting exploration music)
+- **Papyrus `Add()`**: Bypasses ducking entirely → exploration music stays audibly layered under combat music
+
+This means any Papyrus-based "force-start combat music on combat entry" workaround will produce the "multiple tracks playing at once" symptom. Always rely on the engine's native combat trigger, not scripted Add().
+
+### BossMusic.esm Stacking Pattern
+
+BossMusic.esm has 13 MUSC records all at priority 2 (same as MUSCombat). The script `_A_BossMusic.pex` is attached to actors via VMAD. Each tagged actor independently calls `BossMusic.Add()` on combat entry (then `GoToState("PlaySong")`). `BossMusic.Remove()` fires only on `OnDying`.
+
+Consequence: multiple boss-tagged actors in the same fight → multiple `Add()` calls stack at the same priority. Escaped/despawned actors leak entries (Remove() never fires). Stack accumulates over the session, eventually corrupting the music manager so MUSCombat won't re-fire on subsequent encounters.
+
+Diagnostic: `DbSKSEFunctions.GetMusicTypeStatus(BossXxx)` going to `1` (Playing) simultaneously with `MUSCombat=1` confirms stacking.
+
+### CombatMusicFixNG.dll — Incompatible with Multi-Enemy Fights
+
+Despite its name, CombatMusicFixNG.dll **must not be used** here. It hooks actor-death events and calls `Game.GetPlayer().IsInCombat()`. In a multi-enemy fight, there's a brief window after killing one enemy where `IsInCombat()` returns false before the player acquires the next target. The plugin force-terminates combat music in that window even though combat is ongoing. Result: combat music plays 3-4 seconds then stops mid-fight. Keep disabled.
+
+## Orphaned Extended Skeletons -> Havok Contact-Solver CTD
+A partially-uninstalled adult-creature mod (the More-Nasty-Critters / Creature-Framework family) can
+leave orphaned extended `skeleton.nif` files in `Data/meshes/actors/<creature>/character assets/`
+after its ESP, physics configs, and Creature Framework are gone. The extended ragdoll/collision
+(`bhkRagdollConstraint` / `bhkRigidBody` / `bhkCapsuleShape`) can fault the Havok contact solver:
+`EXCEPTION_ACCESS_VIOLATION` in the physics path (`hkpConstraintInstance` / `hkpRigidBody` /
+`hkpSimulationIsland`) while the creature contacts world geometry, independent of combat. Fix: restore
+the vanilla `skeleton.nif` for that creature (extract from `Skyrim - Meshes0.bsa`).
+
+**Tooling note**: nif-tool.exe / the AutoMod `nif` module CANNOT inspect Havok `bhk*` collision
+(textures/strings/shaders only). Use NifSkope (GUI) for collision-block inspection.
+
+
+## Audio & Tooling Lessons
+
+### Freeze/Timestop scripts that kill enemies → vanished corpses (the JCE "disappear" fix)
+
+**Symptom**: an enemy hit by a timestop/freeze effect (AI disabled + paralyzed) is killed *while
+frozen*, then **vanishes** instead of leaving a corpse — specifically *"when the effect finishes."*
+
+**Root cause**: the freeze MGEF's `OnEffectFinish` calls `EnableAI()` / clears `Paralysis` on the
+target **without checking `IsDead()`**. Re-animating a corpse at freeze-end despawns it. (`OnEffectStart`
+is usually guarded against dead targets; `OnEffectFinish` often is not.)
+
+**Fix (general, reusable)** — guard the finish handler so it never touches a dead actor:
+```papyrus
+Event OnEffectFinish(Actor akTarget, Actor akCaster)
+    if akTarget.IsDead()
+        return   ; don't re-enable AI / clear paralysis on a corpse — that despawns it
+    endif
+    ; ...existing un-freeze cleanup...
+EndEvent
+```
+The despawn happens at *finish*, not start (commenting out a ragdoll-removal call at OnEffectStart is
+the wrong fix). The fix is the `IsDead` early-return at the top of `OnEffectFinish` (confirmed working).
+
+### `PushActorAway` argument direction (caused a self-knockback bug)
+
+Signature: `ObjectReference.PushActorAway(Actor akActorToPush, Float aiKnockbackForce)` — **"pushes the
+passed-in actor away from THIS object."** So `X.PushActorAway(Y, f)` pushes **Y** away from **X**.
+- To knock an **enemy** away from the player: `Caster.PushActorAway(enemy, f)` ✓
+- The reversed form `enemy.PushActorAway(Caster, f)` pushes the **PLAYER** ✗ (enemy takes damage but no
+  knockback; the player gets launched — the exact symptom that flagged this).
+
+### AutoMod CLI cannot read MGEF / SNDR internals
+
+`automod esp view-record` returns **empty `Properties`** for MGEF and SoundDescriptor (SNDR) records
+(it surfaces EditorID/RecordType only). To read their fields (archetype, delivery, area, scripts,
+sound file paths) use **xelib** or **Spriggit serialize**. Gotcha: the MGEF archetype field is literally
+**misspelled `Archtype`** in the record — xelib path `Magic Effect Data\DATA - Data\Archtype`. A scan
+using `Archetype` silently matches nothing.
+
+### WAV → XWM audio pipeline (for SNDR sound files)
+
+AutoMod `audio wav-to-xwm` needs `xWMAEncode.exe` (present at `src/xWMAEncode.exe`); it requires an
+`-o` output path. xWMAEncode only accepts **1, 2, or 6** channels and PCM input — multichannel sources
+(e.g. a 7.1.4 WAV) fail with `XWMA_E_UNSUPPORTED_CHANNELS`. Normalize first with ffmpeg, then encode:
+```bash
+ffmpeg -y -i "in.wav" -acodec pcm_s16le -ar 44100 -ac 2 "_pcm.wav"
+src/xWMAEncode.exe "_pcm.wav" "Data/Sound/FX/.../out.xwm"
+```
+A SNDR pointing at a **missing** `.xwm` just plays silence (no crash) — files can be dropped in later.
+
+### Adding new SNDR/SOUN records via Spriggit + the Write-tool `/tmp` gotcha
+
+Spriggit lays records out as per-record YAML in typed folders: SNDR → `SoundDescriptors/`, SOUN →
+`SoundMarkers/`, named `<EditorID> - <FormID>_<Plugin>.yaml`. To add a sound: serialize, clone an
+existing SNDR (set `SoundFiles: [FX\...\file.xwm]`) + SOUN (set `SoundDescriptor:` to the new SNDR),
+deserialize.
+- **Spriggit is on PATH directly as `spriggit`** here (NOT `dotnet tool run spriggit`).
+- **CRITICAL gotcha**: the Write tool's `/tmp` and Bash's `/tmp` resolve to **different** locations on
+  this Windows setup — files Written to `/tmp/...` are invisible to a Bash/Spriggit `/tmp/...` read, so
+  the new records silently never deserialize. Use an **explicit absolute path** (e.g. a dedicated `spriggit-tmp/` dir OUTSIDE `/tmp`) for the serialize OutputPath *and* the Write paths so both tools agree.
+
+
+## Papyrus VM Page-Policy CTD on Heavy Modlists
+Signature (CrashLoggerSSE): `EXCEPTION_ACCESS_VIOLATION` in `SkyrimScript::HandlePolicy::Func4`,
+through `BSScript VirtualMachine -> NativeFunctionBase::Call`, with `SimpleAllocMemoryPagePolicy`
+(and often PapyrusTweaks) in the stack. This is the VM's internal script-memory page-policy faulting
+— NOT machine RAM exhaustion. The last script line is incidental (the policy serves all scripts).
+
+**Tuning lesson**: on a very heavy modlist, do NOT shrink the Papyrus memory page sizes. Inflating
+the pool (`iMaxAllocatedMemoryBytes`) while shrinking `iMaxMemoryPageSize` / `iMinMemoryPageSize`
+produces hundreds of thousands of tiny pages — pathological, and causes an instant CTD on game load.
+Big pages compensate for a big pool; the two are coupled. If the crash frequency is intolerable, the
+only low-risk lever is PapyrusTweaks `bIgnoreMemoryLimit` true->false (re-imposes the ceiling so the
+VM freezes/dumps instead of growing into the fault) — without touching page geometry.
+
+
+## NIF Tooling — PyFFI Limits, PyNifly, and CTD Prevention
+
+**PyFFI 2.2.3 has two HARD limits (both cost us real debugging):**
+1. **Cannot read BSTriShape at all** (`Unknown block type 'BSTriShape'`) → can't touch any SSE-format
+   (user_version_2=100) NIF.
+2. **Authored animation controllers CTD the engine.** PyFFI can construct
+   NiControllerManager/NiControllerSequence blocks and re-read them fine, but the written NIF
+   **crashes-to-desktop the instant it's placed** — PyFFI omits the header string-table registrations
+   the engine requires. (Confirmed in-game 2026-06-15: a PyFFI-authored `SpecialIdle` spinner CTD'd on
+   `placeatme`, despite a clean PyFFI readback.) Also: building from a **fresh `NifFormat.Data()`** corrupts
+   the header on write — always load an existing valid NIF and restructure it.
+   → PyFFI stays useful ONLY for LE-format **NiTriShape geometry edits** (vertex shifts, bounds, the
+   blade split/subdivision).
+
+**PyNifly is the fix** (installed `tools/pynifly/io_scene_nifly/pyn/`, prebuilt DLL, no Blender;
+`from pyn import pynifly` after putting `io_scene_nifly` on `sys.path`). Wraps ousnius/nifly (the
+BodySlide/Outfit Studio engine). **Reads/writes SSE incl. BSTriShape** AND has correct `.New()`
+controller-authoring factories. Use it for any BSTriShape NIF and ALL animation authoring. See
+the `SpecialIdle`-named NiControllerSequence auto-loops on a placed Activator with zero scripting
+(a self-spinning mesh effect with no Papyrus).
+
+**CTD-PREVENTION PRINCIPLE (general, not just NIFs):** a crash-to-desktop must be caught in tooling,
+not the user's headset. The miss that taught this: I "verified" a PyFFI NIF by reading it back **with
+PyFFI** — same buggy tool, so self-consistent ≠ engine-valid. Standing gates before any in-game test:
+(1) author with **valid-by-construction** tools (PyNifly, not hand-rolled PyFFI); (2) **cross-validate
+with an INDEPENDENT, stricter parser** (PyNifly for NIFs — and check the SPECIFIC crashable subsystem,
+e.g. the controller, since a geometry-only read passes even when the animation stack is malformed);
+(3) known-good structure diff. **Cathedral Assets Optimizer was NOT adopted** — it's a Nexus-only
+*optimizer* that would mutate LE-format meshes (toward BSTriShape); PyNifly is the read-only gate.
+
+**STRETCHING A BLADE MESH (geometry lessons):** matrix-stretching a sparse low-poly blade by a large
+factor tears it into invisible slivers, and the worst offenders are the thin cutting-EDGE triangles
+(they taper to ~0 area). Two fixes: (a) **subdivide** the blade first (PyFFI midpoint subdivision,
+crack-free via a shared edge-midpoint dict) so the stretch spreads across many short segments instead
+of a few long ones; (b) **keep the split threshold on a UV/material boundary** — a threshold that pulls
+geometry whose UVs map to a different texture region (e.g. a gold guard vs a steel blade) into the
+stretch makes that region smear and tear. Thicken the THIN dimension (~x2) to give the edge bevel some
+body.
+
+---
+
+## Havok Units & VR Hit-Detection
+
+### Havok game units
+1 Havok unit ≈ 70 game units. This applies to `bhk*` collision blocks ONLY (bhkBoxShape dimensions,
+bhkConvexTransformShape translations, capsule lengths). A ~5000-game-unit collision shape is ~71 Havok
+units. Get this wrong and the collision geometry lands far from the visual mesh.
+
+### VR melee hit-detection stack
+VR melee hit detection is layered: vanilla engine + HIGGS (hand interaction) + WeaponCollision.dll +
+PLANCK (active-ragdoll melee). They stack — a hit can come from any layer.
+- WeaponCollision.dll's `EnemyDetectionRange` (default 600) is often the real range bottleneck — raise
+  it before blaming the weapon.
+- The engine's melee hit range is effectively capped (~1500 game units) and does NOT scale with a
+  longer Havok capsule. Reach beyond the cap must come from a Papyrus script (per-swing scan +
+  spell/damage cast), not from enlarging the collision capsule.
+
+---
+
+## Spawned-Actor Havok CTD (null physics body)
+Calling `PushActorAway` or a lethal `DamageActorValue` on a freshly `PlaceAtMe`'d / just-spawned actor
+whose 3D/Havok body hasn't loaded yet = `EXCEPTION_ACCESS_VIOLATION` CTD. Guard any physics op behind
+an `Is3DLoaded()` wait-loop before touching a spawned actor.
+
+---
+
+## No Papyrus Raycast
+There is no raycast available to Papyrus. Scripts cannot find a beam's or projectile's terrain-contact
+point. Continuous terrain-impact effects keyed to where a beam hits the world are not achievable from
+script alone — use engine projectile collision (impact data sets, explosions) instead.
+
+---
+
+## Immobilizing the Player / NPCs in VR (aggro + VRIK)
+- `DisablePlayerControls(movement)` makes the player effectively un-attackable by NPCs (they stop
+  aggroing). To immobilize while KEEPING aggro, use `Actor.SetDontMove(true)` ALONE — it freezes VR
+  thumbstick locomotion but does NOT freeze the VRIK weapon-bone aim, so the player can still fight.
+- `SetRestrained` stops movement but does NOT stop attacks.
+- To fully freeze an NPC victim (no movement, no attacks), use `EnableAI(false)` — and restore AI
+  before any kill so the corpse doesn't despawn (see the `OnEffectFinish` IsDead guard above).
+
+---
+
+## NIF Validation & Render Trichotomy
+Three independent gates for an authored/edited mesh — run them in order before any in-game test:
+- **PyFFI** — LE-format NiTriShape geometry edits (vertex shifts, bounds, mesh split/subdivision).
+  Cannot read BSTriShape; never author animation controllers with it (CTD).
+- **PyNifly** — reads/writes SSE BSTriShape, authors animation/controller blocks correctly, AND is the
+  independent PARSE gate (a battle-tested second parser that catches malformed files a same-tool
+  readback misses). Check the specific crashable subsystem (e.g. the controller) — a geometry-only
+  read passes even when the animation stack is malformed.
+- **NifSkope (GUI) + headless Blender** — the RENDER gate. NifSkope is the independent visual
+  validator; Blender (headless, PyNifly addon) repairs meshes and renders a NIF to PNG so a fix is
+  confirmed in chat before loading the game. Blender shares the nifly library, so it is NOT an
+  independent parser — use it for repair/render, not parse-validation.
+

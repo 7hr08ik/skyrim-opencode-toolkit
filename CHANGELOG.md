@@ -1,5 +1,45 @@
 # Changelog
 
+## v3.0 — 2026-06-23
+
+### New Capabilities
+- **Author animated NIFs from scratch (PyNifly)** — self-spinning meshes (a `SpecialIdle`
+  NiControllerSequence that auto-loops on a placed Activator with zero scripting), telescoping/
+  extending geometry, and transform-keyframed effects. PyNifly writes the controller blocks correctly
+  (hand-rolled PyFFI authoring CTDs the engine). It also reads/writes SSE **BSTriShape** meshes, which
+  PyFFI cannot.
+- **Headless render-verify loop** — `tools/blender-nif-validate.py` (independent PyNifly parse gate) +
+  `tools/blender-nif-render.py` (render a NIF to PNG) confirm a mesh/VFX fix in chat before a game
+  launch. NifSkope serves as the independent visual gate. "Author → validate → render-proof."
+- **NIF geometry surgery** — `tools/pyffi-geometry-split.py` (split one shape into two for independent
+  shaders / partial-mesh glow), plus the glow-map / mesh-split / stretch techniques documented in the
+  knowledgebase.
+- **AutoMod CLI** (`tools/automod-cli.sh`) — NIF / BSA / audio / MCM / ESP modules surfaced as a
+  first-class tool.
+- **ESP cross-reference integrity guard** — `tools/esp-verify-wrapper.sh` snapshots and diffs every
+  record's cross-references (FormID + target master) to catch silent re-mastering / dropped-reference
+  corruption from bulk remaps.
+- **Snapshot-before-edit hook** — `.claude/hooks/snapshot-before-tool.sh` auto-snapshots active
+  `.psc`/`.pex` files before every Bash command (external tools bypass the Edit/Write backup hook),
+  with rate limiting and auto-pruning.
+
+### Knowledgebase
+- Grown and **fully scrubbed** to ~1,381 lines of generalizable, project-agnostic knowledge.
+- New engine sections: Havok game units (≈70:1), the VR melee hit-detection stack + engine melee-range
+  cap, spawned-actor Havok CTD (`Is3DLoaded()` guard), no-Papyrus-raycast limit, immobilizing the
+  player/NPCs in VR (SetDontMove vs DisablePlayerControls vs EnableAI, with aggro/VRIK interactions),
+  the NIF validation/render trichotomy, PyFFI limits & PyNifly authoring, the Music System (MUSC vs
+  MUST, ducking-bypass, FNAM flags), SOUN-vs-SNDR wiring, the WAV→XWM pipeline, the Papyrus VM
+  page-policy CTD on heavy modlists, and more.
+
+### CLAUDE.md
+- New principle sections: Vanilla Game as Frame of Reference, Native Engine Solutions First, Do Your
+  Homework (due diligence), and Cognitive Co-Pilot (anticipate, don't just comply).
+- New tool docs: PyFFI, PyNifly, AutoMod CLI, the NIF validation/render trichotomy, and the
+  esp-verify integrity guard — all version-agnostic.
+
+---
+
 ## v2.0
 
 ### New Capabilities
