@@ -110,6 +110,24 @@ if [ ! -f "$GAME_DIR/.claude/settings.local.json" ] && [ -f "$GAME_DIR/.claude/s
     echo "  Copied settings.local.json.example (you can customize allowed commands later)"
 fi
 
+# --- Optional: Nexus API integration status (non-blocking) ---
+echo ""
+echo "Checking optional Nexus API integration..."
+NEXUS_KEY_FILE="$GAME_DIR/tools/.nexus_api_key"
+if [ -s "$NEXUS_KEY_FILE" ]; then
+    chmod 600 "$NEXUS_KEY_FILE" 2>/dev/null || true
+    echo "  Nexus API key: configured (tools/.nexus_api_key) -- update detection enabled"
+elif [ -n "$NEXUS_API_KEY" ]; then
+    echo "  Nexus API key: found in \$NEXUS_API_KEY -- update detection enabled"
+else
+    echo "  Nexus API key: not set (optional)."
+    echo "    Unlocks mod version/update/changelog/dependency lookups (update detection & triage)."
+    echo "    To enable: get a free Personal API Key at"
+    echo "      https://www.nexusmods.com/users/myaccount?tab=api"
+    echo "    then save it (one line) to tools/.nexus_api_key  (already gitignored),"
+    echo "    or set the NEXUS_API_KEY environment variable. Claude can do this for you on request."
+fi
+
 echo ""
 echo "============================================"
 echo " Setup Complete!"
@@ -123,7 +141,7 @@ echo "  .claude/hooks/protect-bash.sh    -- Guards dangerous commands"
 echo "  .claude/hooks/protect-files.sh   -- Guards file edits"
 echo "  .claude/hooks/backup-before-edit.sh -- Auto-backups (Edit/Write) with audit trail"
 echo "  .claude/hooks/snapshot-before-tool.sh -- Auto-snapshots .psc/.pex before Bash commands"
-echo "  tools/                           -- Helper scripts (AutoMod wrapper, esp-verify, NIF tools)"
+echo "  tools/                           -- Helper scripts (AutoMod wrapper, esp-verify, NIF tools, nexus.sh)"
 echo "  .claude/backups/                 -- Backup storage (empty for now)"
 echo ""
 echo "The safety hooks are now active. Claude Code will:"

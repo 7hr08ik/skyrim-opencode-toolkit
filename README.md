@@ -143,7 +143,9 @@ I just installed the Skyrim Claude Code Modding Toolkit into this folder. Run "b
   everything up. Install any missing prerequisites (jq, Node.js) for me. After setup, ask me which optional modding
   tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly) and install the ones I pick.
   AutoMod CLI adds NIF mesh editing, BSA archive tools, audio processing, and MCM menu generation; PyNifly adds NIF
-  animation authoring and a headless render-verification loop. Be sure to tailor the environment specifically to my
+  animation authoring and a headless render-verification loop. Also ask me whether I want the optional Nexus API
+  integration (mod update-detection / version & changelog checks); if yes, explain how to get a free Personal API
+  Key and save it to tools/.nexus_api_key (gitignored). Be sure to tailor the environment specifically to my
   Skyrim version and install (may or may not be VR). Explain everything in plain English and ask me any
   questions you may need to.
 ```
@@ -153,6 +155,19 @@ Claude handles the rest. It will configure paths, install dependencies, set up t
 > **Note on the NIF render loop:** The headless render-verification step uses Blender (and, optionally, NifSkope for an independent visual check). These are large external GUI apps, so — like Champollion/Caprica — they aren't bundled in the zip; the setup will point you to install them and wire up the addon. PyFFI and PyNifly themselves are lightweight and handled by setup.
 
 **That's it. You're done.**
+
+---
+
+## Optional: Nexus API Integration
+
+The toolkit can use the free **Nexus Mods API** so Claude can check mod **versions, update dates, changelogs, file info, and dependencies** programmatically — handy for *"did any of my mods update?"*, migration triage, and pre-investigation research. It's entirely optional; everything else works without it.
+
+**To enable it:**
+1. Get a free **Personal API Key**: nexusmods.com → **Site preferences → API Access** ([direct link](https://www.nexusmods.com/users/myaccount?tab=api)) → copy your Personal API Key.
+2. Save it (one line, nothing else) to **`tools/.nexus_api_key`**, or set the **`NEXUS_API_KEY`** environment variable. (Or just paste it to Claude during setup and it'll write the file for you.)
+3. Done — `tools/nexus.sh` and Claude pick it up automatically (file first, then the env var). Quick check: `bash tools/nexus.sh mod 176043` prints that mod's name/version/last-updated.
+
+> **Security:** your key is **personal/local use only**. The file is **gitignored by default** so it's never committed — never share it, paste it publicly, or log it. If it's ever exposed, revoke/regenerate it on the same API Access page.
 
 ---
 

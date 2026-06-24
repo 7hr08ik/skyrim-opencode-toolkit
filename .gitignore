@@ -11,3 +11,8 @@ node_modules/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Nexus personal API key -- NEVER commit
+tools/.nexus_api_key
+.nexus_api_key
+*.nexus_api_key
