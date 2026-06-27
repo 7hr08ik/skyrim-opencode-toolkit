@@ -8,7 +8,7 @@ This is the extended version of the setup instructions. If the README was enough
 
 You're giving Claude Code (an AI assistant) a "brain upgrade" for Skyrim modding. After setup, you can talk to it in plain English and it will:
 
-- Know 600+ Skyrim quirks, pitfalls, and workarounds (including VR-specific sections)
+- Know 1,300+ Skyrim quirks, pitfalls, and workarounds (including VR-specific sections)
 - Protect your game files from accidental damage
 - Decompile and analyze Papyrus scripts
 - Inspect ESP/ESM mod files
@@ -125,7 +125,7 @@ You should see Claude Code's interface -- a text area where you can type message
 Copy this entire block and paste it into Claude Code:
 
 ```
-I just installed the Skyrim Claude Code Modding Toolkit into this folder. Run "bash setup.sh" to set everything up. Install any missing prerequisites (jq, Node.js) for me. After setup, ask me which optional modding tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI) and install the ones I pick. Be sure to tailor the environment specifically to my Skyrim version and install (may or may not be VR). Explain everything in plain English and ask me any questions you may need to.
+I just installed the Skyrim Claude Code Modding Toolkit into this folder. Run "bash setup.sh" to set everything up. Install any missing prerequisites (jq, Node.js) for me. After setup, ask me which optional modding tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly, Blender, NifSkope, ReSaver CLI) and install the ones I pick. AutoMod CLI adds NIF mesh editing, BSA archive tools, audio processing, and MCM menu generation -- it is a real tool you install by cloning https://github.com/SpookyPirate/spookys-automod-toolkit into tools/automod and building the Cli project (dotnet build tools/automod/src/SpookysAutomod.Cli -c Release; do not build the WPF Setup project headless), after which it runs via tools/automod-cli.sh. PyFFI + PyNifly add NIF geometry and animation/controller authoring; Blender (headless) + NifSkope add mesh repair and render-verification of meshes before in-game testing. ReSaver CLI adds headless .ess save parsing, cross-referencing, and cleaning (download ReSaver.jar from Nexus mod 5031 into tools/resaver-cli/; needs JDK 17+ (JDK 21 LTS recommended; e.g. `winget install Microsoft.OpenJDK.21`)). Be sure to tailor the environment specifically to my Skyrim version and install (may or may not be VR). Also ask me whether I want to enable the optional Nexus API integration (mod update-detection / version & changelog checks); if yes, explain how to get a free Personal API Key and save it to tools/.nexus_api_key (which is gitignored). Explain everything in plain English and ask me any questions you may need to.
 ```
 
 Press Enter. Claude will:
@@ -134,9 +134,12 @@ Press Enter. Claude will:
 2. **Install jq** if you don't have it (a small tool the hooks need)
 3. **Offer optional tools** and explain what each does:
    - **xeditlib** -- lets Claude read/create ESP mod files with code
-   - **Champollion** -- decompiles Papyrus scripts so you can read them
-   - **Caprica** -- compiles Papyrus scripts you write
-   - **Spriggit** -- converts ESP files to readable text
+   - **Champollion / Caprica** -- decompile / compile Papyrus scripts
+   - **Spriggit** -- converts ESP files to readable text (and back)
+   - **AutoMod CLI** -- NIF / BSA / audio / MCM / ESP operations
+   - **PyFFI / PyNifly** -- NIF geometry + animation authoring (the v3 animation/render features)
+   - **Blender / NifSkope** -- mesh repair + render-verification before in-game testing
+   - **ReSaver CLI** -- headless save (.ess) parsing, cross-referencing, and cleaning
 4. **Verify everything works**
 5. **Show you what you can do**
 

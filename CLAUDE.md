@@ -9,8 +9,8 @@ A modded Skyrim installation managed by Vortex (or your mod manager of choice). 
 ## Key Paths
 
 - **Game root**: `{{GAME_ROOT}}/`
-- **User INI configs**: `{{DOCUMENTS_DIR}}/My Games/Skyrim VR/` (Skyrim.ini, SkyrimVR.ini, SkyrimPrefs.ini)
-- **Load order**: `%LOCALAPPDATA%/Skyrim VR/loadorder.txt` and `plugins.txt`
+- **User INI configs**: `{{DOCUMENTS_DIR}}/My Games/{{SKYRIM_FOLDER}}/` (Skyrim.ini, SkyrimVR.ini, SkyrimPrefs.ini)
+- **Load order**: `{{LOCALAPPDATA}}/{{SKYRIM_FOLDER}}/loadorder.txt` and `plugins.txt`
 - **SKSE plugins**: `Data/SKSE/Plugins/`
 - **Mod data**: `Data/` (ESPs, BSAs, meshes, textures, scripts)
 
@@ -27,7 +27,7 @@ All under `tools/`:
 | **AutoMod CLI** | NIF meshes, BSA archives, audio, MCM, ESP one-liners | `bash tools/automod-cli.sh <module> <command> --json` |
 | **PyFFI** | NIF geometry edit — **NiTriShape (LE-format) ONLY** (Python 3.10) | See PyFFI section below |
 | **PyNifly** | NIF read/write incl. **BSTriShape (SSE)** + **animation/controller authoring** (Python, prebuilt DLL) | See PyNifly section below |
-| **ReSaver CLI** | Headless `.ess` save parse / query / cross-reference / clean | `bash tools/resaver-cli.sh <info\|dump\|find\|find-refs\|worries\|set-global\|set-var\|clean> <save.ess>` — all writes are dry-run unless `--apply` (which writes a NEW file, never overwriting the input); resolve FormID→EditorID via `tools/resaver-resolve-names.js`. Needs a JDK + ReSaver's jar (see install section). |
+| **ReSaver CLI** | Headless `.ess` save parse / query / cross-reference / clean | `bash tools/resaver-cli.sh <info\|dump\|find\|find-refs\|worries\|set-global\|set-var\|clean> <save.ess>` — all writes are dry-run unless `--apply` (which writes a NEW file, never overwriting the input); resolve FormID→EditorID via `tools/resaver-resolve-names.js`. Needs JDK 17+ (JDK 21 LTS recommended; e.g. `winget install Microsoft.OpenJDK.21`) + ReSaver's jar (see install section). |
 
 > **Note**: Install the tools you need into a `tools/` folder in your game directory; the setup prompt walks through this. See the [xeditlib](https://github.com/WingedGuardian/xeditlib) repo for XEditLib setup. NifSkope and Blender (used for NIF render-verification and mesh repair — see below) are large external GUI apps installed separately, not bundled.
 
@@ -37,6 +37,7 @@ None of the modding tools are bundled — install only the ones you need. Per to
 
 - **xeditlib** — Node.js wrapper around XEditLib.dll for programmatic ESP/ESM read/write.
   - Acquire: `npm install github:WingedGuardian/xeditlib` (installs from GitHub; the bare `npm install xeditlib` works only once it's published to the npm registry).
+  - **Registry requirement**: XEditLib loads in `gmSSE` mode (game mode 4) even on VR, so it reads the game path from the **SSE** registry key. If `HKLM\SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition` is missing (common on a VR-only install), ESP loads fail. Create it from an **admin** terminal: `reg add "HKLM\SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition" /v "Installed Path" /t REG_SZ /d "<GAME_DIR>\" /f`.
   - Verify: `node -e "require('xeditlib')"` exits clean.
 - **Champollion** — decompiles Papyrus `.pex` → `.psc`.
   - Acquire: download a release from github.com/Orvid/Champollion/releases and unpack into `tools/Champollion/`.
@@ -50,15 +51,19 @@ None of the modding tools are bundled — install only the ones you need. Per to
   - Verify: `spriggit --help`.
 - **AutoMod CLI** — NIF / BSA / audio / MCM / ESP one-liners.
   - Acquire: `git clone https://github.com/SpookyPirate/spookys-automod-toolkit` into `tools/automod`.
-  - Pin the SDK: create `tools/automod/global.json` selecting SDK `8.0.x` with `"rollForward": "latestFeature"`.
+  - Pin the SDK: create `tools/automod/global.json` selecting SDK `8.0.x` with `"rollForward": "latestFeature"`:
+    ```json
+    { "sdk": { "version": "8.0.100", "rollForward": "latestFeature" } }
+    ```
   - Build the **Cli project only**: `dotnet build tools/automod/src/SpookysAutomod.Cli -c Release`. The WPF `Setup` project targets `net8.0-windows` — **never build it headless** (it will fail). The built artifact is `spookys-automod.dll`.
   - Run via the wrapper: `bash tools/automod-cli.sh <module> <command> --json`; pass `--rebuild` to rebuild the DLL.
   - Verify: `bash tools/automod-cli.sh esp --help --json`.
 - **PyFFI** — LE-format NiTriShape geometry edits.
-  - Acquire: `pip install pyffi` using a **Python 3.10** interpreter (not 3.12); scripts need the `time.clock = time.perf_counter` monkey-patch.
-  - Verify: `python -c "import pyffi; print(pyffi.__version__)"`.
+  - Requires **Python 3.10** specifically (not 3.12). If you don't have 3.10, get it from python.org and install it to a **non-default path** — do NOT set it as the system default (it would shadow your existing Python). Then install PyFFI against that interpreter explicitly: `C:\path\to\python310\python.exe -m pip install pyffi`. Record that interpreter path so all PyFFI scripts invoke it directly.
+  - Scripts need the `time.clock = time.perf_counter` monkey-patch.
+  - Verify with that same interpreter: `C:\path\to\python310\python.exe -c "import pyffi; print(pyffi.__version__)"`.
 - **PyNifly** — SSE BSTriShape read/write + animation/controller authoring + the independent parse gate.
-  - Acquire: `git clone https://github.com/BadDogSkyrim/PyNifly`. It ships a prebuilt `NiflyDLL.dll` — no build step.
+  - Acquire: download `io_scene_nifly.zip` from the latest release at https://github.com/BadDogSkyrim/PyNifly/releases and extract it into `tools/pynifly/` so the prebuilt DLL lands at `tools/pynifly/io_scene_nifly/pyn/NiflyDLL.dll`. No build step. (A `git clone` of the repo does NOT contain the compiled DLL — it only ships in the release zip.)
   - Verify: load the DLL per the PyNifly section below.
 - **Blender (headless)** — NIF mesh repair + render-to-PNG verification.
   - Acquire: download from blender.org; install the PyNifly Blender addon.
@@ -67,7 +72,7 @@ None of the modding tools are bundled — install only the ones you need. Per to
   - Acquire: download a release from github.com/niftools/nifskope/releases.
   - Verify: launch it and open any NIF.
 - **ReSaver CLI** — headless `.ess` save parse / cross-reference / clean.
-  - Acquire: download ReSaver from the FallrimTools page (Nexus mod 5031) and drop `ReSaver.jar` plus its `lib/` folder into `tools/resaver-cli/`; a JDK is required. The wrapper auto-compiles its small driver on first run.
+  - Acquire: download ReSaver from the FallrimTools page (Nexus mod 5031) and drop `ReSaver.jar` plus its `lib/` folder into `tools/resaver-cli/`; needs JDK 17+ (JDK 21 LTS recommended; e.g. `winget install Microsoft.OpenJDK.21`). The wrapper auto-compiles its small driver on first run.
   - Verify: `bash tools/resaver-cli.sh info <save.ess>` prints JSON.
 - **`tools/nexus.sh`** — built-in Nexus API helper (no install). Needs your Nexus key per the Nexus section below.
   - Verify: `bash tools/nexus.sh mod <id>` prints a mod's name/version.
@@ -265,10 +270,10 @@ This prevents accidental ESP corruption. The hook system blocks direct ESP write
 For **creating or editing ESP records**, prefer Spriggit over xelib. Spriggit serializes ESP files to human-readable YAML that Claude can edit directly with its native Edit tool — no FFI, no scripting layer, and the YAML diffs cleanly in git.
 
 ### Workflow
-1. **Serialize**: `spriggit serialize --InputPath "Data/MyMod.esp" --OutputPath "/tmp/mymod-yaml" --GameRelease SkyrimSE --PackageName Spriggit.Yaml --PackageVersion "0.40.0"`
+1. **Serialize**: `bash tools/spriggit-cli.sh serialize --InputPath "Data/MyMod.esp" --OutputPath "<output-yaml-dir>" --GameRelease SkyrimSE --PackageName Spriggit.Yaml --PackageVersion "<installed-version>"` (use the wrapper — scratch/output paths are usually deeply nested and raw `spriggit` throws `UnauthorizedAccessException` on them; see Fix note below for `<installed-version>`)
 2. **Edit**: Read and modify the YAML files directly
 3. **Review**: User reviews the YAML changes (human-readable diffs)
-4. **Deserialize**: `spriggit deserialize --InputPath "/tmp/mymod-yaml" --OutputPath "Data/MyMod.esp"`
+4. **Deserialize**: `bash tools/spriggit-cli.sh deserialize --InputPath "<output-yaml-dir>" --OutputPath "Data/MyMod.esp"`
 
 ### When to Use Which
 - **Spriggit**: Creating new ESPs, editing existing records, any task where you're modifying specific fields.
@@ -278,6 +283,7 @@ For **creating or editing ESP records**, prefer Spriggit over xelib. Spriggit se
 - `spriggit-meta.json` is required in the YAML root for deserialization
 - ESP header version must be 1.7 for SSE/VR (not 1.0)
 - `--GameRelease` is only for serialize, NOT deserialize; `--PackageVersion` is REQUIRED when `--PackageName` is set
+- **Don't hardcode `--PackageVersion`** (e.g. `0.40.0` goes stale the moment `dotnet tool install` pulls a newer Spriggit). Discover the installed version with `spriggit --version` and pass exactly that.
 - Use `-u` / `--ErrorOnUnknown` on serialize — Spriggit **silently drops unknown YAML fields** otherwise (no error, no warning). Always round-trip verify a new field: deserialize → re-serialize → grep for the field.
 
 ## ESP Dependency Rule: Own Your Records

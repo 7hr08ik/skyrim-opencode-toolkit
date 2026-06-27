@@ -67,13 +67,57 @@ if [ -z "$JQ_PATH" ]; then
 fi
 echo "  Found jq: $JQ_PATH"
 
+# --- Detect Node.js (needed for xeditlib; auto-install) ---
+echo ""
+echo "Checking for Node.js..."
+if which node >/dev/null 2>&1; then
+    echo "  Found Node.js: $(node --version 2>/dev/null)"
+else
+    echo "  Node.js not found. It's needed for xeditlib (ESP read/write via XEditLib.dll)."
+    echo "  Installing Node.js LTS via winget..."
+    winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements 2>/dev/null || {
+        echo "  Could not auto-install Node.js. Install it manually when you need xeditlib:"
+        echo "    winget install OpenJS.NodeJS.LTS   (or download from nodejs.org)"
+    }
+    if which node >/dev/null 2>&1; then
+        echo "  Node.js installed: $(node --version 2>/dev/null)"
+    fi
+fi
+
+# --- Detect .NET SDK (needed for Spriggit / AutoMod; do NOT auto-install) ---
+echo ""
+echo "Checking for the .NET SDK..."
+if which dotnet >/dev/null 2>&1; then
+    echo "  Found .NET SDK: $(dotnet --version 2>/dev/null)"
+else
+    echo "  .NET SDK not found. Spriggit (ESP <-> YAML) and AutoMod CLI need it."
+    echo "    Install when you want those tools:  winget install Microsoft.DotNet.SDK.8"
+fi
+
+# --- Detect a JDK (needed for ReSaver CLI; do NOT auto-install) ---
+echo ""
+echo "Checking for a JDK..."
+if which java >/dev/null 2>&1; then
+    echo "  Found Java: $(java -version 2>&1 | head -n1)"
+else
+    echo "  No JDK found. ReSaver CLI (headless .ess save parse/clean) needs JDK 17+."
+    echo "    Install when you want it:  winget install Microsoft.OpenJDK.21"
+fi
+
 # --- Detect user paths ---
 DOCUMENTS_DIR="C:/Users/$USERNAME/Documents"
-echo ""
-if [ -d "$DOCUMENTS_DIR/My Games/Skyrim VR" ] || [ -d "$DOCUMENTS_DIR/My Games/Skyrim Special Edition" ]; then
-    echo "  Found Skyrim configs in: $DOCUMENTS_DIR/My Games/"
+LOCALAPPDATA_DIR="${LOCALAPPDATA:-C:/Users/$USERNAME/AppData/Local}"
+# Which Skyrim variant's config folder exists? (VR vs SE) -- default to Skyrim VR.
+if [ -d "$DOCUMENTS_DIR/My Games/Skyrim Special Edition" ] && [ ! -d "$DOCUMENTS_DIR/My Games/Skyrim VR" ]; then
+    SKYRIM_FOLDER="Skyrim Special Edition"
 else
-    echo "  WARNING: Skyrim config not found at $DOCUMENTS_DIR/My Games/"
+    SKYRIM_FOLDER="Skyrim VR"
+fi
+echo ""
+if [ -d "$DOCUMENTS_DIR/My Games/$SKYRIM_FOLDER" ]; then
+    echo "  Found Skyrim configs in: $DOCUMENTS_DIR/My Games/$SKYRIM_FOLDER/"
+else
+    echo "  WARNING: Skyrim config not found under $DOCUMENTS_DIR/My Games/"
     echo "  You may need to update paths in CLAUDE.md manually."
 fi
 
@@ -96,7 +140,9 @@ if grep -q '{{GAME_ROOT}}' "$GAME_DIR/CLAUDE.md"; then
     sed -i "s|{{GAME_ROOT}}|$GAME_DIR|g" "$GAME_DIR/CLAUDE.md"
     sed -i "s|{{USERNAME}}|$USERNAME|g" "$GAME_DIR/CLAUDE.md"
     sed -i "s|{{DOCUMENTS_DIR}}|$DOCUMENTS_DIR|g" "$GAME_DIR/CLAUDE.md"
-    echo "  Configured with your paths."
+    sed -i "s|{{LOCALAPPDATA}}|$LOCALAPPDATA_DIR|g" "$GAME_DIR/CLAUDE.md"
+    sed -i "s|{{SKYRIM_FOLDER}}|$SKYRIM_FOLDER|g" "$GAME_DIR/CLAUDE.md"
+    echo "  Configured with your paths (Skyrim folder: $SKYRIM_FOLDER)."
 else
     echo "  Already configured."
 fi
@@ -106,8 +152,9 @@ mkdir -p "$GAME_DIR/.claude/backups"
 
 # --- Copy settings.local.json.example if no settings.local.json exists ---
 if [ ! -f "$GAME_DIR/.claude/settings.local.json" ] && [ -f "$GAME_DIR/.claude/settings.local.json.example" ]; then
+    cp "$GAME_DIR/.claude/settings.local.json.example" "$GAME_DIR/.claude/settings.local.json"
     echo ""
-    echo "  Copied settings.local.json.example (you can customize allowed commands later)"
+    echo "  Copied settings.local.json.example -> settings.local.json (customize allowed commands later)"
 fi
 
 # --- Optional: Nexus API integration status (non-blocking) ---
@@ -165,12 +212,14 @@ echo "                  pin SDK 8.0.x via tools/automod/global.json (rollForward
 echo "                  build the Cli project ONLY (dotnet build tools/automod/src/SpookysAutomod.Cli -c Release)"
 echo "                  -- never build the WPF Setup project headless -- then use tools/automod-cli.sh"
 echo "  PyFFI        -- LE NiTriShape geometry (Python 3.10):  pip install pyffi"
-echo "  PyNifly      -- SSE BSTriShape + animation authoring:  git clone https://github.com/BadDogSkyrim/PyNifly"
-echo "                  (ships a prebuilt NiflyDLL.dll -- no build)"
+echo "  PyNifly      -- SSE BSTriShape + animation authoring:"
+echo "                  download io_scene_nifly.zip from github.com/BadDogSkyrim/PyNifly/releases,"
+echo "                  extract into tools/pynifly/ (DLL -> tools/pynifly/io_scene_nifly/pyn/NiflyDLL.dll; no build)."
+echo "                  NOTE: a git clone does NOT include the compiled DLL -- use the release zip"
 echo "  Blender      -- NIF repair + render-to-PNG (headless): blender.org (+ PyNifly Blender addon)"
 echo "  NifSkope     -- independent visual NIF render gate:    github.com/niftools/nifskope/releases"
 echo "  ReSaver CLI  -- headless .ess parse/cross-ref/clean:   download ReSaver from Nexus mod 5031"
-echo "                  (FallrimTools); drop ReSaver.jar + lib/ into tools/resaver-cli/; needs a JDK;"
+echo "                  (FallrimTools); drop ReSaver.jar + lib/ into tools/resaver-cli/; needs JDK 17+;"
 echo "                  the wrapper auto-compiles its driver on first run (tools/resaver-cli.sh)"
 echo ""
 echo "You're ready to go! Start asking Claude about your mods."

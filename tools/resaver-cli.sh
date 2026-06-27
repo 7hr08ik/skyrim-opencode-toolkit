@@ -28,4 +28,11 @@ if [ ! -f "$TOOL/ResaverCLI.class" ] || [ "$TOOL/ResaverCLI.java" -nt "$TOOL/Res
   javac -cp "$CP" -d "$TOOL" "$TOOL/ResaverCLI.java" >&2 || { echo '{"ok":false,"error":"compile failed"}'; exit 1; }
 fi
 
-exec java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -cp "$TOOL;$CP" ResaverCLI "$@"
+# Build JVM flags conditionally — older JDKs reject these options (they only silence
+# harmless lz4/Unsafe warnings on newer ones). --enable-native-access is JDK 17+,
+# --sun-misc-unsafe-memory-access is JDK 23+.
+JV=$(java -version 2>&1 | awk -F'"' '/version/{print $2}' | awk -F'[._]' '{if($1=="1")print $2; else print $1}')
+FLAGS=""
+[ "${JV:-0}" -ge 17 ] 2>/dev/null && FLAGS="$FLAGS --enable-native-access=ALL-UNNAMED"
+[ "${JV:-0}" -ge 23 ] 2>/dev/null && FLAGS="$FLAGS --sun-misc-unsafe-memory-access=allow"
+exec java $FLAGS -cp "$TOOL;$CP" ResaverCLI "$@"

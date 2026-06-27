@@ -94,9 +94,9 @@ None of these are bundled; setup walks you through any you pick.
 - **Spriggit** -- ESP ↔ YAML editing (`dotnet tool install Spriggit.CLI`)
 - **AutoMod CLI** -- NIF / BSA / audio / MCM / ESP. **Must be cloned and built**: clone https://github.com/SpookyPirate/spookys-automod-toolkit into `tools/automod` and build the Cli project (not the WPF Setup project) — then run via `tools/automod-cli.sh`.
 - **PyFFI** -- LE-format NIF geometry (Python 3.10, `pip install pyffi`)
-- **PyNifly** -- SSE BSTriShape + animation authoring (prebuilt DLL, no build)
+- **PyNifly** -- SSE BSTriShape + animation authoring (download `io_scene_nifly.zip` from the GitHub **releases**, not a git clone — the compiled DLL ships only in the release zip; no build)
 - **Blender (headless) / NifSkope** -- NIF mesh repair + render verification (large external apps)
-- **ReSaver CLI** -- headless `.ess` save parse / cross-reference / clean (download ReSaver from **Nexus mod 5031** / FallrimTools into `tools/resaver-cli/`; requires **a JDK**)
+- **ReSaver CLI** -- headless `.ess` save parse / cross-reference / clean (download ReSaver from **Nexus mod 5031** / FallrimTools into `tools/resaver-cli/`; requires **JDK 17+**, JDK 21 LTS recommended)
 
 ---
 
@@ -149,21 +149,10 @@ claude
 
 ### Step 4: Paste This Prompt
 
-Copy this entire line and paste it into Claude Code:
+Copy this entire prompt and paste it into Claude Code (it's also saved as `SETUP_PROMPT.txt` in your Skyrim folder):
 
 ```
-I just installed the Skyrim Claude Code Modding Toolkit into this folder. Run "bash setup.sh" to set
-  everything up. Install any missing prerequisites (jq, Node.js) for me. After setup, ask me which optional modding
-  tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly, Blender, NifSkope, ReSaver
-  CLI) and install the ones I pick. AutoMod CLI adds NIF mesh editing, BSA archive tools, audio processing, and MCM
-  menu generation -- it is a real tool you install by cloning https://github.com/SpookyPirate/spookys-automod-toolkit
-  into tools/automod and building the Cli project (do not build the WPF Setup project headless), after which it runs
-  via tools/automod-cli.sh. PyNifly adds NIF animation authoring and a headless render-verification loop. ReSaver CLI
-  adds headless .ess save parsing, cross-referencing, and cleaning (download ReSaver.jar from Nexus mod 5031 into
-  tools/resaver-cli/; needs a JDK). Also ask me whether I want the optional Nexus API integration (mod
-  update-detection / version & changelog checks); if yes, explain how to get a free Personal API Key and save it to
-  tools/.nexus_api_key (gitignored). Be sure to tailor the environment specifically to my Skyrim version and install
-  (may or may not be VR). Explain everything in plain English and ask me any questions you may need to.
+I just installed the Skyrim Claude Code Modding Toolkit into this folder. Run "bash setup.sh" to set everything up. Install any missing prerequisites (jq, Node.js) for me. After setup, ask me which optional modding tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly, Blender, NifSkope, ReSaver CLI) and install the ones I pick. AutoMod CLI adds NIF mesh editing, BSA archive tools, audio processing, and MCM menu generation -- it is a real tool you install by cloning https://github.com/SpookyPirate/spookys-automod-toolkit into tools/automod and building the Cli project (dotnet build tools/automod/src/SpookysAutomod.Cli -c Release; do not build the WPF Setup project headless), after which it runs via tools/automod-cli.sh. PyFFI + PyNifly add NIF geometry and animation/controller authoring; Blender (headless) + NifSkope add mesh repair and render-verification of meshes before in-game testing. ReSaver CLI adds headless .ess save parsing, cross-referencing, and cleaning (download ReSaver.jar from Nexus mod 5031 into tools/resaver-cli/; needs JDK 17+ (JDK 21 LTS recommended; e.g. `winget install Microsoft.OpenJDK.21`)). Be sure to tailor the environment specifically to my Skyrim version and install (may or may not be VR). Also ask me whether I want to enable the optional Nexus API integration (mod update-detection / version & changelog checks); if yes, explain how to get a free Personal API Key and save it to tools/.nexus_api_key (which is gitignored). Explain everything in plain English and ask me any questions you may need to.
 ```
 
 Claude handles the rest. It will configure paths, install dependencies, set up the safety hooks, and walk you through optional tool installation. Just answer any questions it asks.
@@ -306,7 +295,7 @@ MIT -- see [LICENSE](LICENSE).
 - [xeditlib](https://github.com/WingedGuardian/xeditlib) -- Node.js wrapper for XEditLib.dll
 - [zEdit](https://github.com/z-edit/zedit) -- Source of XEditLib.dll
 - [Spriggit](https://github.com/Mutagen-Modding/Spriggit) -- ESP to YAML serialization by Mutagen
-- [Spooky's AutoMod Toolkit](https://github.com/SpookyPirate/spookys-automod-toolkit) -- Inspiration for expanded CLI capabilities
+- [Spooky's AutoMod Toolkit](https://github.com/SpookyPirate/spookys-automod-toolkit) -- the CLI backend for the toolkit's NIF/BSA/audio/MCM/ESP operations
 - [PyNifly](https://github.com/BadDogSkyrim/PyNifly) -- NIF read/write and animation authoring (wraps [nifly](https://github.com/ousnius/nifly))
 - [PyFFI](https://github.com/niftools/pyffi) -- LE-format NIF geometry editing
 - [Blender](https://www.blender.org/) and [NifSkope](https://github.com/niftools/nifskope) -- mesh repair and independent render verification
