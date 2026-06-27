@@ -27,8 +27,56 @@ All under `tools/`:
 | **AutoMod CLI** | NIF meshes, BSA archives, audio, MCM, ESP one-liners | `bash tools/automod-cli.sh <module> <command> --json` |
 | **PyFFI** | NIF geometry edit — **NiTriShape (LE-format) ONLY** (Python 3.10) | See PyFFI section below |
 | **PyNifly** | NIF read/write incl. **BSTriShape (SSE)** + **animation/controller authoring** (Python, prebuilt DLL) | See PyNifly section below |
+| **ReSaver CLI** | Headless `.ess` save parse / query / cross-reference / clean | `bash tools/resaver-cli.sh <info\|dump\|find\|find-refs\|worries\|set-global\|set-var\|clean> <save.ess>` — all writes are dry-run unless `--apply` (which writes a NEW file, never overwriting the input); resolve FormID→EditorID via `tools/resaver-resolve-names.js`. Needs a JDK + ReSaver's jar (see install section). |
 
 > **Note**: Install the tools you need into a `tools/` folder in your game directory; the setup prompt walks through this. See the [xeditlib](https://github.com/WingedGuardian/xeditlib) repo for XEditLib setup. NifSkope and Blender (used for NIF render-verification and mesh repair — see below) are large external GUI apps installed separately, not bundled.
+
+## Installing the Optional Tools
+
+None of the modding tools are bundled — install only the ones you need. Per tool: what it is, how to acquire it, and a quick verify.
+
+- **xeditlib** — Node.js wrapper around XEditLib.dll for programmatic ESP/ESM read/write.
+  - Acquire: `npm install github:WingedGuardian/xeditlib` (installs from GitHub; the bare `npm install xeditlib` works only once it's published to the npm registry).
+  - Verify: `node -e "require('xeditlib')"` exits clean.
+- **Champollion** — decompiles Papyrus `.pex` → `.psc`.
+  - Acquire: download a release from github.com/Orvid/Champollion/releases and unpack into `tools/Champollion/`.
+  - Verify: `tools/Champollion/Champollion.exe --help`.
+- **Caprica** — compiles Papyrus `.psc` → `.pex`.
+  - Acquire: download a release from github.com/Orvid/Caprica/releases and unpack into `tools/Caprica/`.
+  - Verify: `tools/Caprica/Caprica.exe --help`.
+- **Spriggit** — ESP ↔ YAML/JSON serialization.
+  - Acquire: `dotnet tool install Spriggit.CLI` (or `dotnet tool install --global Spriggit.CLI`).
+  - For deeply-nested output paths that trip `UnauthorizedAccessException`, call `tools/spriggit-cli.sh` (same args; it runs in a shallow workspace and copies the result back).
+  - Verify: `spriggit --help`.
+- **AutoMod CLI** — NIF / BSA / audio / MCM / ESP one-liners.
+  - Acquire: `git clone https://github.com/SpookyPirate/spookys-automod-toolkit` into `tools/automod`.
+  - Pin the SDK: create `tools/automod/global.json` selecting SDK `8.0.x` with `"rollForward": "latestFeature"`.
+  - Build the **Cli project only**: `dotnet build tools/automod/src/SpookysAutomod.Cli -c Release`. The WPF `Setup` project targets `net8.0-windows` — **never build it headless** (it will fail). The built artifact is `spookys-automod.dll`.
+  - Run via the wrapper: `bash tools/automod-cli.sh <module> <command> --json`; pass `--rebuild` to rebuild the DLL.
+  - Verify: `bash tools/automod-cli.sh esp --help --json`.
+- **PyFFI** — LE-format NiTriShape geometry edits.
+  - Acquire: `pip install pyffi` using a **Python 3.10** interpreter (not 3.12); scripts need the `time.clock = time.perf_counter` monkey-patch.
+  - Verify: `python -c "import pyffi; print(pyffi.__version__)"`.
+- **PyNifly** — SSE BSTriShape read/write + animation/controller authoring + the independent parse gate.
+  - Acquire: `git clone https://github.com/BadDogSkyrim/PyNifly`. It ships a prebuilt `NiflyDLL.dll` — no build step.
+  - Verify: load the DLL per the PyNifly section below.
+- **Blender (headless)** — NIF mesh repair + render-to-PNG verification.
+  - Acquire: download from blender.org; install the PyNifly Blender addon.
+  - Verify: `blender --background --version`.
+- **NifSkope** — independent visual NIF render gate (GUI).
+  - Acquire: download a release from github.com/niftools/nifskope/releases.
+  - Verify: launch it and open any NIF.
+- **ReSaver CLI** — headless `.ess` save parse / cross-reference / clean.
+  - Acquire: download ReSaver from the FallrimTools page (Nexus mod 5031) and drop `ReSaver.jar` plus its `lib/` folder into `tools/resaver-cli/`; a JDK is required. The wrapper auto-compiles its small driver on first run.
+  - Verify: `bash tools/resaver-cli.sh info <save.ess>` prints JSON.
+- **`tools/nexus.sh`** — built-in Nexus API helper (no install). Needs your Nexus key per the Nexus section below.
+  - Verify: `bash tools/nexus.sh mod <id>` prints a mod's name/version.
+
+### Reliability fixes (why these wrappers exist)
+
+1. **AutoMod** — `tools/automod-cli.sh` invokes the **prebuilt `spookys-automod.dll`** directly rather than `dotnet run`. This fixes the per-call recompile / MSB1025 failures that the old `dotnet run` form produced; rebuild once with `--rebuild` after changing AutoMod source.
+2. **Spriggit** — deep/nested output paths throw `UnauthorizedAccessException`. Use `tools/spriggit-cli.sh`, which runs in a shallow workspace and copies the result back. It **preserves the exact ESP basename** (= the Spriggit ModKey) so FormKey master references aren't corrupted.
+3. **xelib** — in `GM_SSE` mode the loader reads the **SSE** `plugins.txt`, which may be **absent** on a VR install → the load fails silently. Use `tools/xelib/active-plugins.js` `loadActive()` to read and load the real active order explicitly, and always run xelib via a `.js` **file** (`node script.js`), never `node -e '...'` (inline eval deterministically breaks `SetGameMode`).
 
 ## AutoMod CLI
 

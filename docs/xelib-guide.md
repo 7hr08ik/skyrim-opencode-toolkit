@@ -9,7 +9,7 @@ This means you can read, inspect, diff, and modify ESP/ESM files with code inste
 ## Installation
 
 ```bash
-npm install xeditlib
+npm install github:WingedGuardian/xeditlib
 ```
 
 This installs:

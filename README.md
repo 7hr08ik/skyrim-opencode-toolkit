@@ -64,7 +64,7 @@ This isn't a guide that tells you what to install and configure yourself. It's a
 
 Skyrim modding is full of undocumented engine quirks, version-specific differences, and tools that silently fail. This toolkit was built and tested on a live **Skyrim VR** install, but the knowledge, hooks, and scripts work across all versions — SE, AE, VR, and even LE where applicable. The knowledgebase includes version-specific sections so Claude knows what differs and what doesn't.
 
-The clearest example: **xeditlib**. XEditLib.dll is the engine inside SSEEdit/xEdit -- the most powerful ESP editing tool in the Skyrim modding ecosystem. Getting it working from Node.js (so Claude Code could actually read and write ESP files) required cracking open the Delphi FFI layer and fixing a cascade of subtle bugs: strings encoded as UCS-2 instead of UTF-8, `InitXEdit()` silently corrupting the call stack when declared wrong, booleans that are actually 2-byte integers, a non-obvious two-step string-return pattern. None of this is documented anywhere. We debugged it, fixed it, and published the working wrapper as [xeditlib](https://github.com/WingedGuardian/xeditlib) on npm so you never have to deal with any of it. Claude Code can now read any ESP file and write new ones -- something that wouldn't work at all before this toolkit.
+The clearest example: **xeditlib**. XEditLib.dll is the engine inside SSEEdit/xEdit -- the most powerful ESP editing tool in the Skyrim modding ecosystem. Getting it working from Node.js (so Claude Code could actually read and write ESP files) required cracking open the Delphi FFI layer and fixing a cascade of subtle bugs: strings encoded as UCS-2 instead of UTF-8, `InitXEdit()` silently corrupting the call stack when declared wrong, booleans that are actually 2-byte integers, a non-obvious two-step string-return pattern. None of this is documented anywhere. We debugged it, fixed it, and open-sourced the working wrapper as [xeditlib](https://github.com/WingedGuardian/xeditlib) so you never have to deal with any of it. Claude Code can now read any ESP file and write new ones -- something that wouldn't work at all before this toolkit.
 
 ### Everything Included
 
@@ -83,7 +83,20 @@ The clearest example: **xeditlib**. XEditLib.dll is the engine inside SSEEdit/xE
 - **Save file analysis** -- Decompress and binary-scan .ess saves. Search for orphaned scripts, count effect accumulation, check mod footprint, detect save bloat.
 - **Dry-run workflow** -- All ESP and asset changes go through a preview pass first. Claude shows you exactly what it will do before touching anything.
 - **Claude Code skills** -- Slash commands like `/inspect-esp MyMod.esp`, `/port-to-vr`, and `/create-mod` that trigger guided workflows. Auto-loading context that injects critical Skyrim gotchas when Claude works with game files.
-- **Auto-setup** -- One prompt installs prerequisites, configures paths, sets up hooks, and optionally installs modding tools (Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly). No manual configuration.
+- **Auto-setup** -- One prompt installs prerequisites, configures paths, sets up hooks, and optionally installs modding tools. No manual configuration.
+
+### Optional tools (install as needed)
+
+None of these are bundled; setup walks you through any you pick.
+
+- **xeditlib** -- programmatic ESP read/write (`npm install github:WingedGuardian/xeditlib`)
+- **Champollion / Caprica** -- Papyrus decompile / compile (GitHub releases)
+- **Spriggit** -- ESP ↔ YAML editing (`dotnet tool install Spriggit.CLI`)
+- **AutoMod CLI** -- NIF / BSA / audio / MCM / ESP. **Must be cloned and built**: clone https://github.com/SpookyPirate/spookys-automod-toolkit into `tools/automod` and build the Cli project (not the WPF Setup project) — then run via `tools/automod-cli.sh`.
+- **PyFFI** -- LE-format NIF geometry (Python 3.10, `pip install pyffi`)
+- **PyNifly** -- SSE BSTriShape + animation authoring (prebuilt DLL, no build)
+- **Blender (headless) / NifSkope** -- NIF mesh repair + render verification (large external apps)
+- **ReSaver CLI** -- headless `.ess` save parse / cross-reference / clean (download ReSaver from **Nexus mod 5031** / FallrimTools into `tools/resaver-cli/`; requires **a JDK**)
 
 ---
 
@@ -141,13 +154,16 @@ Copy this entire line and paste it into Claude Code:
 ```
 I just installed the Skyrim Claude Code Modding Toolkit into this folder. Run "bash setup.sh" to set
   everything up. Install any missing prerequisites (jq, Node.js) for me. After setup, ask me which optional modding
-  tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly) and install the ones I pick.
-  AutoMod CLI adds NIF mesh editing, BSA archive tools, audio processing, and MCM menu generation; PyNifly adds NIF
-  animation authoring and a headless render-verification loop. Also ask me whether I want the optional Nexus API
-  integration (mod update-detection / version & changelog checks); if yes, explain how to get a free Personal API
-  Key and save it to tools/.nexus_api_key (gitignored). Be sure to tailor the environment specifically to my
-  Skyrim version and install (may or may not be VR). Explain everything in plain English and ask me any
-  questions you may need to.
+  tools I'd like (xeditlib, Champollion, Caprica, Spriggit, AutoMod CLI, PyFFI, PyNifly, Blender, NifSkope, ReSaver
+  CLI) and install the ones I pick. AutoMod CLI adds NIF mesh editing, BSA archive tools, audio processing, and MCM
+  menu generation -- it is a real tool you install by cloning https://github.com/SpookyPirate/spookys-automod-toolkit
+  into tools/automod and building the Cli project (do not build the WPF Setup project headless), after which it runs
+  via tools/automod-cli.sh. PyNifly adds NIF animation authoring and a headless render-verification loop. ReSaver CLI
+  adds headless .ess save parsing, cross-referencing, and cleaning (download ReSaver.jar from Nexus mod 5031 into
+  tools/resaver-cli/; needs a JDK). Also ask me whether I want the optional Nexus API integration (mod
+  update-detection / version & changelog checks); if yes, explain how to get a free Personal API Key and save it to
+  tools/.nexus_api_key (gitignored). Be sure to tailor the environment specifically to my Skyrim version and install
+  (may or may not be VR). Explain everything in plain English and ask me any questions you may need to.
 ```
 
 Claude handles the rest. It will configure paths, install dependencies, set up the safety hooks, and walk you through optional tool installation. Just answer any questions it asks.
@@ -294,4 +310,5 @@ MIT -- see [LICENSE](LICENSE).
 - [PyNifly](https://github.com/BadDogSkyrim/PyNifly) -- NIF read/write and animation authoring (wraps [nifly](https://github.com/ousnius/nifly))
 - [PyFFI](https://github.com/niftools/pyffi) -- LE-format NIF geometry editing
 - [Blender](https://www.blender.org/) and [NifSkope](https://github.com/niftools/nifskope) -- mesh repair and independent render verification
+- [FallrimTools / ReSaver](https://www.nexusmods.com/skyrimspecialedition/mods/5031) -- save-file (.ess) parsing library driven headlessly by the ReSaver CLI
 - [Claude Code](https://claude.ai/code) by Anthropic

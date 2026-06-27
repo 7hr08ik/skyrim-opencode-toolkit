@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.1 — 2026-06-27
+
+### New Capabilities
+- **ReSaver CLI** (`tools/resaver-cli.sh`) — headless `.ess` save parsing, querying, cross-referencing,
+  and cleaning, driving ReSaver's (FallrimTools) Java library. Ops: `info` / `dump` / `find` /
+  `find-refs` / `worries` / `set-global` / `set-var` / `clean`. Writes are dry-run unless `--apply` and
+  always go to a NEW file (never overwriting the input); FormID→EditorID resolution via
+  `tools/resaver-resolve-names.js`. Supersedes raw binary byte-scanning for structured save work.
+
+### Reliability Fixes
+- **AutoMod** — `tools/automod-cli.sh` now invokes the **prebuilt `spookys-automod.dll`** instead of
+  `dotnet run`, eliminating the per-call recompile / MSB1025 failures.
+- **Spriggit** — `tools/spriggit-cli.sh` runs deep/nested output paths in a shallow workspace,
+  fixing the `UnauthorizedAccessException` on deeply-nested paths (preserves the exact basename = ModKey).
+- **xelib** — `tools/xelib/active-plugins.js` `loadActive()` handles the case where the SSE `plugins.txt`
+  the GM_SSE loader expects is absent on a VR install (which otherwise fails silently).
+
+### Setup Instructions Overhaul
+- Every optional tool now has explicit acquisition/build instructions in CLAUDE.md, setup.sh,
+  SETUP_PROMPT.txt, and README.md — including the AutoMod clone + Cli-project build (fixes Claude
+  treating the AutoMod CLI as "fictional" when it wasn't already present).
+
+---
+
 ## v3.0 — 2026-06-23
 
 ### New Capabilities
@@ -85,7 +109,7 @@
 ## v1.0
 
 - Initial release
-- xeditlib integration (Delphi FFI fixes published as npm package)
+- xeditlib integration (Delphi FFI fixes open-sourced on GitHub)
 - Safety hooks: command guard, file guard, auto-backup with audit log
 - Confidence system and investigation-first workflow
 - 600+ line Skyrim knowledgebase

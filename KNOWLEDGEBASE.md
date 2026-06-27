@@ -783,6 +783,33 @@ SSE, AE, and VR saves all use the same `.ess` format with LZ4 compression. The c
 
 ---
 
+## Headless Save Editing (ReSaver CLI)
+
+ReSaver (the save inspector from FallrimTools) ships a Java **library** that can be driven headlessly — no GUI — to parse, cross-reference, and clean `.ess` saves **deterministically**. This supersedes raw binary byte-scanning for any structured work: instead of guessing at offsets you get parsed ChangeForms, the Papyrus instance/string tables, and a real reference index.
+
+**Operations** (`bash tools/resaver-cli.sh <op> <save.ess> [args]`):
+- `info` — high-level summary (plugin lists, counts, save metadata)
+- `dump` — structured dump of parsed contents
+- `find` — locate elements (forms, scripts, strings) by id/name
+- `find-refs` — cross-reference: what points at a given form/instance
+- `worries` — surface likely problems (orphans, unattached instances, suspicious accumulation)
+- `set-global` / `set-var` — targeted value edits
+- `clean` — remove orphaned/unattached script data
+
+**Write safety:** every write op is **dry-run by default** and only applies with `--apply`. An applied write always goes to a **NEW file** — it never overwrites the input save. As always, **loading the result in-game is the final validation gate.**
+
+**Performance:** a full structured parse of a ~45MB save runs in about **2.4s**, including building the cross-reference index — fast enough to use interactively during debugging.
+
+**Name resolution:** ReSaver works in FormIDs. Resolve FormID → EditorID on demand with `tools/resaver-resolve-names.js` (xeditlib-backed) so dumps and reference reports are human-readable.
+
+**Requirements:** a JDK plus ReSaver's `ReSaver.jar` + its `lib/` folder in `tools/resaver-cli/`. The wrapper auto-compiles its small driver on first run.
+
+### Node/koffi helper exit codes are unreliable on Windows
+
+Every xelib / koffi-based Node helper (resaver-resolve-names.js, the xelib scripts, etc.) can exit **non-zero (e.g. 127) even on full success** on Windows / Git-Bash — Node's stdio-flush-on-exit races against the resident native DLL's teardown. **Judge success by parsing the JSON the script prints, never by the process exit code.** Wrappers that gate on `$?` will report phantom failures.
+
+---
+
 ## Hook Candidates
 
 A living list of potential safety hooks identified during work. Evaluated but not necessarily implemented.
