@@ -793,16 +793,42 @@ ReSaver (the save inspector from FallrimTools) ships a Java **library** that can
 - `find` — locate elements (forms, scripts, strings) by id/name
 - `find-refs` — cross-reference: what points at a given form/instance
 - `worries` — surface likely problems (orphans, unattached instances, suspicious accumulation)
+- `recon` — sync-aware parse-coverage scan of ALL changeform body types (per-type ok/fail, failure
+  categories, unknown extra-data types with predecessor histograms — the "phantom test")
+- `changeform` — parse ONE changeform body (`--raw` adds changeflags + hex/base64; `--depth N`)
+- `extradata-scan` — tally unknown extra-data types (`--type REFR` is the trustworthy subset)
+- `changeform-diff` — structured + raw-tail diff of a changeform across two saves (noise-labeled)
+- `globaldata` / `globaldata-diff` — global-data table survey / cross-save diff
 - `set-global` / `set-var` — targeted value edits
 - `clean` — remove orphaned/unattached script data
+- `reset-havok` / `cleanse-formlists` / `remove-created` — ReSaver-delegated bulk cleanups
+- `verify-roundtrip` — safety self-test: write + re-read + compare, report identical (temp discarded)
 
-**Write safety:** every write op is **dry-run by default** and only applies with `--apply`. An applied write always goes to a **NEW file** — it never overwrites the input save. As always, **loading the result in-game is the final validation gate.**
+**Analysis overlay (read ops only):** the read/diagnostic ops layer a small overlay of *modified
+ReSaver source* (Apache-2.0; `tools/resaver-cli/analysis-overlay/`) in front of the jar for extra
+changeform parse coverage (extra-data types 16/135, QUST QuestInstances, REFR extra-data). **Write
+ops always run the STOCK jar** so an authored parse fix can never reach `ChangeForm.write()` —
+corruption safety. If the overlay can't compile against your ReSaver version, the wrapper falls back
+to stock parsing automatically (basic ops unaffected).
+
+**Write safety:** every write op is **dry-run by default** and only applies with `--apply`. An applied write always goes to a **NEW file** — it never overwrites the input save. Every `--apply` is additionally **verify-gated**: the output is re-read and compared to the written model, and on any unintended divergence the file is deleted and the op fails (fail-to-write beats silent corruption). As always, **loading the result in-game is the final validation gate.**
 
 **Performance:** a full structured parse of a ~45MB save runs in about **2.4s**, including building the cross-reference index — fast enough to use interactively during debugging.
 
 **Name resolution:** ReSaver works in FormIDs. Resolve FormID → EditorID on demand with `tools/resaver-resolve-names.js` (xeditlib-backed) so dumps and reference reports are human-readable.
 
 **Requirements:** a JDK plus ReSaver's `ReSaver.jar` + its `lib/` folder in `tools/resaver-cli/`. The wrapper auto-compiles its small driver on first run.
+
+## Co-save (.skse) Structural Survey (cosave-info)
+
+The `.ess` is only half the save state — SKSE mods stash their own data in a sibling **co-save**
+(`SaveN_....skse`, same basename as the `.ess`). `bash tools/cosave-cli.sh <cosave.skse>` emits a
+**read-only** JSON survey: the header fields plus a per-opcode chunk inventory (count + total bytes),
+so you can see **which** plugins stashed co-save data (StorageUtil/PapyrusUtil, JContainers, per-mod
+blobs) and **how much** — the mod-state landscape the `.ess` never exposes. It surveys chunk
+*structure* (the `{u32 type, u32 version, u32 length}` walk, validated on real VR cosaves) and
+resyncs on a desync, reporting coverage — it does **not** decode each chunk's plugin-internal format
+(those are undocumented per-plugin). No install beyond Python 3; it never writes the cosave.
 
 ### Node/koffi helper exit codes are unreliable on Windows
 

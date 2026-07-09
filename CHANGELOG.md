@@ -1,5 +1,35 @@
 # Changelog
 
+## v3.2 — 2026-07-09
+
+### Fixes
+- **xelib scripts couldn't find the wrapper on a fresh install.** `tools/xelib/loader_diag.js`,
+  `tools/xelib/active-plugins.js`, and `tools/resaver-resolve-names.js` used `require('./xelib')`,
+  which resolves to a local file that only exists in a dev layout — on a clean install they threw
+  `MODULE_NOT_FOUND`. All now `require('xeditlib')` (the real package name). Install xeditlib **from
+  the toolkit root** (`npm install github:WingedGuardian/xeditlib`) so Node's upward module lookup
+  finds it from `tools/` and `examples/` alike; the bundled `XEditLib.dll` + `*.Hardcoded.dat` load
+  relative to the package, so the scripts are cwd-independent. Docs/setup updated to say so.
+  (Thanks to @awesmdiver for reporting the broken require paths.)
+
+### New Capabilities
+- **ReSaver CLI — changeform-level diagnostics.** New read ops `recon` (sync-aware parse-coverage
+  scan of all changeform body types), `changeform` (parse one changeform body), `extradata-scan`,
+  `changeform-diff`, `globaldata`/`globaldata-diff`, `freeze-report`; new verify-gated write ops
+  `reset-havok`, `cleanse-formlists`, `remove-created`, plus a `verify-roundtrip` self-test. Every
+  `--apply` is verify-gated (the output is re-read and compared to the written model; on any
+  unintended divergence the file is deleted and the op fails). Read/diagnostic ops layer a small
+  **analysis overlay** (modified ReSaver source, Apache-2.0 — see
+  `tools/resaver-cli/analysis-overlay/NOTICE.md`) in front of your jar for extra parse coverage;
+  write ops always run the STOCK jar; if the overlay can't compile against your ReSaver version the
+  wrapper falls back to stock parsing automatically. JVM flags are now JDK-version-gated so the tool
+  starts on JDK 17–22 (not just 23+).
+- **cosave-info** (`tools/cosave-cli.sh` + `tools/cosave-info.py`) — read-only structural survey of
+  an SKSE `.skse` co-save → JSON: which mods stashed co-save data (StorageUtil/PapyrusUtil/
+  JContainers/per-mod blobs) and how much — the mod-state landscape the `.ess` itself never exposes.
+
+---
+
 ## v3.1 — 2026-06-27
 
 ### New Capabilities

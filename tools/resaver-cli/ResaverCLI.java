@@ -4,9 +4,27 @@ import resaver.ess.RefID;
 import resaver.ess.Plugin;
 import resaver.ess.Element;
 import resaver.ess.ChangeForm;
+import resaver.ess.ChangeFormData;
+import resaver.ess.GeneralElement;
+import resaver.ess.ChangeFormExtraDataData;
 import resaver.ess.GlobalVariable;
+import resaver.ess.GlobalData;
+import resaver.ess.GlobalDataBlock;
 import resaver.ProgressModel;
+import resaver.ess.ChangeFormACHR;
+import resaver.ess.ChangeFormRefr;
+import resaver.ess.ChangeFormFLST;
+import resaver.ess.ChangeFormLeveled;
+import resaver.ess.ChangeFormNPC;
+import resaver.ess.ChangeFormRela;
+import resaver.ess.ChangeFormQust;
+import resaver.ess.ChangeFormInventoryItem;
 import resaver.ess.papyrus.*;
+import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.Buffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
@@ -17,9 +35,13 @@ import java.util.*;
  *   info       <save>
  *   dump       <save> <subsystem> [--limit N] [--undefined-only] [--script <name>] [--type <T>]
  *              subsystem: scriptinstances|activescripts|references|structinstances|scripts|globals|changeforms
+ *   changeform <save> <refidHex> [--depth N]   parse ONE ChangeForm body (default 00000014=player); bestEffort partial
  *   find-refs  <save> <eidHex>                 who references this element (direct + secondary, labeled)
  *   find       <save> <query>                  query = <Plugin.esp:formid> | <formidHex> | <script-name substring>
  *   worries    <save>                          ReSaver's Worrier problem report
+ *   recon      <save>                          READ: sync-aware parse-coverage scan of ALL body types
+ *                                              (perType ok/fail, failure categories, unknown extra-data
+ *                                              types WITH predecessor histograms = the phantom test)
  *   set-global <save> <target> <value> [<out.ess>] [--apply]   target = formidHex | Plugin.esp:formid
  *   set-var    <save> <eidHex> [<index> <value> <out.ess>] [--type int|float|bool|str] [--apply]
  *   clean      <save> <out.ess> [--undefined] [--unattached] [--terminate-threads] [--apply]
@@ -42,12 +64,23 @@ public class ResaverCLI {
             switch (op) {
                 case "info":       info(ess, pap); break;
                 case "dump":       dump(ess, pap, ctx, args); break;
+                case "changeform": changeform(ess, args); break;
                 case "find-refs":  findRefs(ess, pap, ctx, arg(args, 2, null)); break;
                 case "find":       find(ess, pap, ctx, arg(args, 2, null)); break;
                 case "worries":    worries(result); break;
                 case "set-global": setGlobal(ess, args); break;
                 case "set-var":    setVar(ess, pap, ctx, args); break;
                 case "clean":      clean(ess, pap, save, args); break;
+                case "reset-havok":       resetHavokOp(ess, args); break;
+                case "cleanse-formlists": cleanseFormListsOp(ess, args); break;
+                case "remove-created":    removeCreatedOp(ess, args); break;
+                case "verify-roundtrip":  verifyRoundtrip(ess); break;
+                case "extradata-scan":    extradataScan(ess, args); break;
+                case "recon":             recon(ess, args); break;
+                case "changeform-diff":   changeformDiff(ess, args); break;
+                case "freeze-report":     freezeReport(ess, pap); break;
+                case "globaldata":        globalDataOp(ess); break;
+                case "globaldata-diff":   globalDataDiff(ess, args); break;
                 default: err("unknown op: " + op);
             }
         } catch (Throwable t) {
@@ -111,7 +144,8 @@ public class ResaverCLI {
                     b.append("{\"id\":").append(jstr(str(a.getID())))
                      .append(",\"undefined\":").append(a.isUndefined())
                      .append(",\"terminated\":").append(a.isTerminated())
-                     .append(",\"attached\":").append(jstr(str(a.getAttachedElement()))).append("}");
+                     .append(",\"attached\":").append(jstr(str(a.getAttachedElement())))
+                     .append(",\"instance\":").append(jstr(str(a.getInstance()))).append("}");
                 }
                 break;
             case "references":
@@ -174,6 +208,104 @@ public class ResaverCLI {
         if (n >= limit) b.append(",\"truncated\":true");
         b.append("}");
         System.out.println(b);
+    }
+
+    // ---------- changeform (parse one ChangeForm BODY; bestEffort=true returns a partial) ----------
+
+    static void changeform(ESS ess, String[] args) {
+        String refHex = arg(args, 2, "00000014");          // default = the player
+        Long fid = parseHex(refHex);
+        int maxDepth = flagVal(args, "--depth") != null ? Integer.parseInt(flagVal(args, "--depth")) : 8;
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"changeform\",\"refid\":").append(jstr(refHex));
+        if (fid == null) { b.append(",\"error\":\"bad refid hex\"}"); System.out.println(b); return; }
+
+        // collect refid matches; prefer the ACHR (actor) form when several share a FormID
+        List<ChangeForm> matches = new ArrayList<>();
+        for (ChangeForm cf : ess.getChangeForms()) if (refidMatches(cf.getRefID(), null, fid)) matches.add(cf);
+        ChangeForm chosen = null;
+        for (ChangeForm cf : matches) if ("ACHR".equalsIgnoreCase(str(cf.getType()))) { chosen = cf; break; }
+        if (chosen == null && !matches.isEmpty()) chosen = matches.get(0);
+        if (chosen == null) { b.append(",\"found\":false}"); System.out.println(b); return; }
+
+        b.append(",\"found\":true,\"actualRefid\":").append(jstr(refStr(chosen.getRefID())))
+         .append(",\"type\":").append(jstr(str(chosen.getType())))
+         .append(",\"matchCount\":").append(matches.size())
+         .append(",\"compressed\":").append(chosen.isCompressed());
+
+        // --raw: emit decoded changeflags + raw body bytes (for diff inputs / read-only RE analysis)
+        if (has(args, "--raw")) {
+            b.append(",\"changeFlags\":").append(jstr(str(chosen.getChangeFlags())));
+            ByteBuffer rawBody = chosen.getBodyData();
+            if (rawBody != null) {
+                ((Buffer) rawBody).position(0);
+                byte[] raw = new byte[rawBody.remaining()]; rawBody.get(raw);
+                b.append(",\"bodyLength\":").append(raw.length)
+                 .append(",\"bodyHex\":").append(jstr(hex(raw, 0, raw.length)))
+                 .append(",\"bodyBase64\":").append(jstr(java.util.Base64.getEncoder().encodeToString(raw)));
+            } else b.append(",\"bodyLength\":0");
+        }
+
+        // bestEffort=true: returns the PARTIAL parse (via ElementException.getPartial) instead of null
+        ChangeFormData data = null; String parseErr = null;
+        try { data = chosen.getData(Optional.empty(), ess.getContext(), true); }
+        catch (Throwable t) { parseErr = t.toString(); }
+
+        if (data == null) {
+            b.append(",\"parsed\":false,\"parseError\":")
+             .append(jstr(parseErr == null ? "getData returned null (not bestEffort-recoverable)" : parseErr))
+             .append("}");
+            System.out.println(b); return;
+        }
+        b.append(",\"parsed\":true,\"dataClass\":").append(jstr(data.getClass().getSimpleName()));
+        if (data instanceof GeneralElement) {
+            GeneralElement ge = (GeneralElement) data;
+            b.append(",\"hasUnparsed\":").append(ge.hasUnparsed());
+            b.append(",\"tree\":");
+            generalElementToJson(b, ge, maxDepth, new int[]{0});
+        } else {
+            b.append(",\"tree\":").append(jstr(str(data)));
+        }
+        b.append("}");
+        System.out.println(b);
+    }
+
+    static final int CF_NODE_CAP = 20000;   // guard against pathological trees
+
+    static void generalElementToJson(StringBuilder b, GeneralElement ge, int depth, int[] nodes) {
+        b.append("{");
+        // surface the human-readable extra-data type name (e.g. "MagicTarget", "Worn", "Enchantment")
+        if (ge instanceof ChangeFormExtraDataData) {
+            b.append("\"_extraType\":").append(jstr(((ChangeFormExtraDataData) ge).NAME));
+        }
+        boolean first = !(ge instanceof ChangeFormExtraDataData);
+        for (Map.Entry<?, ?> e : ge.getValues().entrySet()) {
+            if (nodes[0]++ > CF_NODE_CAP) { if (!first) b.append(","); b.append("\"_capped\":true"); break; }
+            if (!first) b.append(","); first = false;
+            b.append(jstr(String.valueOf(e.getKey()))).append(":");
+            valueToJson(b, e.getValue(), depth, nodes);
+        }
+        b.append("}");
+    }
+
+    static void valueToJson(StringBuilder b, Object v, int depth, int[] nodes) {
+        if (v == null) { b.append("null"); return; }
+        if (v instanceof GeneralElement) {
+            if (depth <= 0) { b.append(jstr("<" + v.getClass().getSimpleName() + " depth-capped>")); return; }
+            generalElementToJson(b, (GeneralElement) v, depth - 1, nodes); return;
+        }
+        if (v instanceof Object[]) {
+            Object[] a = (Object[]) v; b.append("[");
+            for (int i = 0; i < a.length; i++) { if (i > 0) b.append(","); valueToJson(b, a[i], depth, nodes); }
+            b.append("]"); return;
+        }
+        if (v instanceof byte[])  { byte[] a=(byte[])v;  b.append("["); for(int i=0;i<a.length;i++){if(i>0)b.append(",");b.append(a[i]&0xFF);} b.append("]"); return; }
+        if (v instanceof short[]) { short[] a=(short[])v;b.append("["); for(int i=0;i<a.length;i++){if(i>0)b.append(",");b.append(a[i]);} b.append("]"); return; }
+        if (v instanceof int[])   { int[] a=(int[])v;    b.append("["); for(int i=0;i<a.length;i++){if(i>0)b.append(",");b.append(a[i]);} b.append("]"); return; }
+        if (v instanceof long[])  { long[] a=(long[])v;  b.append("["); for(int i=0;i<a.length;i++){if(i>0)b.append(",");b.append(a[i]);} b.append("]"); return; }
+        if (v instanceof float[]) { float[] a=(float[])v;b.append("["); for(int i=0;i<a.length;i++){if(i>0)b.append(",");b.append(a[i]);} b.append("]"); return; }
+        if (v instanceof Number || v instanceof Boolean) { b.append(v.toString()); return; }
+        b.append(jstr(v.toString()));   // RefID / WStringElement / VSVal / etc.
     }
 
     // ---------- find-refs (direct + secondary, labeled) ----------
@@ -435,6 +567,548 @@ public class ResaverCLI {
         System.out.println(b);
     }
 
+    // ========== CORRUPTION-SAFETY CORE ==========
+    // We author NO serialization. Writes delegate to ReSaver's own ESS methods + ESS.writeESS.
+    // Every --apply is VERIFY-GATED: re-read the output and confirm it equals the in-memory model
+    // that produced it; on ANY divergence DELETE the output and fail. Fail-to-write beats silent
+    // corruption. ChangeForm.write() emits original rawData verbatim unless updateRawData() was
+    // explicitly called (so unmodified forms are byte-faithful by construction).
+
+    /** Op-agnostic invariant: re-read(output) MUST equal the in-memory model that wrote it.
+     *  Returns null if identical, else a human-readable divergence summary. */
+    static String compareModels(ESS expected, ESS actual) {
+        StringBuilder d = new StringBuilder();
+        Map<String,ChangeForm> ma = indexCF(expected), mb = indexCF(actual);
+        if (ma.size() != mb.size()) d.append("changeFormCount ").append(ma.size()).append("->").append(mb.size()).append("; ");
+        int bodyDiff=0, typeDiff=0, onlyA=0, onlyB=0, readErr=0;
+        Set<String> all = new TreeSet<>(); all.addAll(ma.keySet()); all.addAll(mb.keySet());
+        for (String k : all) {
+            ChangeForm fa = ma.get(k), fb = mb.get(k);
+            if (fa == null) { onlyB++; continue; }
+            if (fb == null) { onlyA++; continue; }
+            if (!Objects.equals(str(fa.getType()), str(fb.getType()))) { typeDiff++; continue; }
+            byte[] xa, xb;
+            try { xa = cfBytes(fa); xb = cfBytes(fb); } catch (Throwable t) { readErr++; continue; }
+            if (!Arrays.equals(xa, xb)) bodyDiff++;
+        }
+        if (bodyDiff>0) d.append("changeformBodyDiff=").append(bodyDiff).append("; ");
+        if (typeDiff>0) d.append("changeformTypeDiff=").append(typeDiff).append("; ");
+        if (onlyA>0) d.append("onlyInExpected=").append(onlyA).append("; ");
+        if (onlyB>0) d.append("onlyInActual=").append(onlyB).append("; ");
+        if (readErr>0) d.append("bodyReadErrors=").append(readErr).append("; ");
+        Map<String,Float> ga = globalsMap(expected), gb = globalsMap(actual);
+        if (ga.size() != gb.size()) d.append("globalCount ").append(ga.size()).append("->").append(gb.size()).append("; ");
+        int gDiff=0; for (String k : ga.keySet()) { Float vb = gb.get(k); if (vb!=null && !ga.get(k).equals(vb)) gDiff++; }
+        if (gDiff>0) d.append("globalValueDiff=").append(gDiff).append("; ");
+        Papyrus pa = expected.getPapyrus(), pb = actual.getPapyrus();
+        if (pa.getScriptInstances().size()!=pb.getScriptInstances().size()) d.append("scriptInstances ").append(pa.getScriptInstances().size()).append("->").append(pb.getScriptInstances().size()).append("; ");
+        if (pa.getReferences().size()!=pb.getReferences().size()) d.append("references ").append(pa.getReferences().size()).append("->").append(pb.getReferences().size()).append("; ");
+        if (pa.getActiveScripts().size()!=pb.getActiveScripts().size()) d.append("activeScripts ").append(pa.getActiveScripts().size()).append("->").append(pb.getActiveScripts().size()).append("; ");
+        return d.length()==0 ? null : d.toString();
+    }
+
+    static Map<String,ChangeForm> indexCF(ESS e) { Map<String,ChangeForm> m=new HashMap<>(); for (ChangeForm c : e.getChangeForms()) m.put(str(c.getRefID()), c); return m; }
+    static byte[] cfBytes(ChangeForm c) { ByteBuffer b=c.getBodyData(); if (b==null) return new byte[0]; ((Buffer)b).position(0); byte[] r=new byte[b.remaining()]; b.get(r); return r; }
+    static Map<String,Float> globalsMap(ESS e) { Map<String,Float> m=new HashMap<>(); for (GlobalVariable g : e.getGlobals().getVariables()){ String s=str(g); int i=s.indexOf(" = "); m.put(i<0?s:s.substring(0,i), g.getValue()); } return m; }
+
+    /** After writeESS, re-read the output and confirm it equals the in-memory model.
+     *  On ANY divergence or read failure, DELETE the output (+ cosave) and return the divergence. */
+    static String verifyWrite(ESS expected, Path outPath) {
+        try {
+            ESS reread = ESS.readESS(outPath, new ModelBuilder(new ProgressModel(1))).ESS;
+            String diff = compareModels(expected, reread);
+            if (diff == null) return null;
+            deleteOutput(outPath);
+            return diff;
+        } catch (Throwable t) {
+            deleteOutput(outPath);
+            return "re-read FAILED: " + t;
+        }
+    }
+    static void deleteOutput(Path outPath) {
+        try { Files.deleteIfExists(outPath); } catch (Throwable ignore) {}
+        try {
+            String fn = outPath.getFileName().toString();
+            if (fn.toLowerCase().endsWith(".ess"))
+                Files.deleteIfExists(outPath.resolveSibling(fn.substring(0, fn.length()-4) + ".skse"));
+        } catch (Throwable ignore) {}
+    }
+
+    /** Shared dry-run/apply tail with the MANDATORY verify gate. */
+    static void finishWrite(StringBuilder b, ESS ess, boolean apply, String out) throws Exception {
+        if (!apply) { b.append(",\"dryRun\":true,\"wroteFile\":false}"); System.out.println(b); return; }
+        if (out == null) { b.append(",\"error\":\"--apply needs <out.ess>\",\"wroteFile\":false}"); System.out.println(b); return; }
+        Path outPath = Paths.get(out);
+        if (Files.exists(outPath)) { b.append(",\"error\":\"refusing to overwrite existing file; choose a NEW out.ess\",\"wroteFile\":false}"); System.out.println(b); return; }
+        ESS.writeESS(ess, outPath, false);
+        String diff = verifyWrite(ess, outPath);
+        if (diff != null) {
+            b.append(",\"verified\":false,\"corruptionGuard\":\"OUTPUT DELETED\",\"divergence\":").append(jstr(diff)).append(",\"wroteFile\":false}");
+            System.out.println(b); return;
+        }
+        b.append(",\"verified\":true,\"wroteFile\":true,\"out\":").append(jstr(outPath.toString())).append("}");
+        System.out.println(b);
+    }
+
+    // ---------- verify-roundtrip (safety self-test; temp write, discarded) ----------
+    static void verifyRoundtrip(ESS ess) throws Exception {
+        Path dir = Files.createTempDirectory("resaver_rt_");
+        Path tmp = dir.resolve("roundtrip.ess");
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"verify-roundtrip\"");
+        try {
+            ESS.writeESS(ess, tmp, false);
+            ESS reread = ESS.readESS(tmp, new ModelBuilder(new ProgressModel(1))).ESS;
+            String diff = compareModels(ess, reread);
+            b.append(",\"identical\":").append(diff==null);
+            if (diff != null) b.append(",\"divergence\":").append(jstr(diff));
+            b.append(",\"changeForms\":").append(ess.getChangeForms().size());
+        } finally {
+            try { Files.walk(dir).sorted(Comparator.reverseOrder()).forEach(p -> { try { Files.deleteIfExists(p);}catch(Exception e){} }); } catch (Exception e) {}
+        }
+        b.append("}");
+        System.out.println(b);
+    }
+
+    // ---------- write ops (ReSaver-delegated, verify-gated) ----------
+    static void resetHavokOp(ESS ess, String[] args) throws Exception {
+        boolean apply = has(args, "--apply");
+        List<String> pos = positionals(args, 2);
+        String out = pos.isEmpty() ? null : pos.get(0);
+        int[] r = ess.resetHavok(Optional.empty());   // {success, failure}
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"reset-havok\",\"success\":").append(r[0]).append(",\"failure\":").append(r[1]).append(",\"apply\":").append(apply);
+        finishWrite(b, ess, apply, out);
+    }
+    static void cleanseFormListsOp(ESS ess, String[] args) throws Exception {
+        boolean apply = has(args, "--apply");
+        List<String> pos = positionals(args, 2);
+        String out = pos.isEmpty() ? null : pos.get(0);
+        int[] r = ess.cleanseFormLists(Optional.empty());  // {entries, forms}
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"cleanse-formlists\",\"nullEntriesRemoved\":").append(r[0]).append(",\"formListsAffected\":").append(r[1]).append(",\"apply\":").append(apply);
+        finishWrite(b, ess, apply, out);
+    }
+    static void removeCreatedOp(ESS ess, String[] args) throws Exception {
+        boolean apply = has(args, "--apply");
+        List<String> pos = positionals(args, 2);
+        String out = pos.isEmpty() ? null : pos.get(0);
+        Set<PapyrusElement> removed = ess.removeNonexistentCreated();
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"remove-created\",\"removed\":").append(removed.size()).append(",\"examples\":[");
+        int n=0; for (PapyrusElement e : removed) { if (n>=8) break; if (n++>0) b.append(","); b.append(jstr(str(e))); }
+        b.append("],\"apply\":").append(apply);
+        finishWrite(b, ess, apply, out);
+    }
+
+    // ---------- extradata-scan (READ; the unknown-extra-data oracle) ----------
+    // NB: getData(false) SWALLOWS the parse error -> null; getData(true) logs only the TOP message,
+    // not the type-bearing cause. So we call the body constructor DIRECTLY and walk the cause chain.
+    static void extradataScan(ESS ess, String[] args) {
+        ESS.ESSContext ctx = ess.getContext();
+        String typeArg = flagVal(args, "--type");
+        boolean onlyA = "ACHR".equalsIgnoreCase(typeArg), onlyR = "REFR".equalsIgnoreCase(typeArg);
+        int limit = flagVal(args,"--limit")!=null ? Integer.parseInt(flagVal(args,"--limit")) : Integer.MAX_VALUE;
+        java.util.regex.Pattern P = java.util.regex.Pattern.compile("Unknown ExtraData: type=(\\d+)");
+        Map<Integer,Integer> typeCounts = new TreeMap<>();
+        Map<Integer,List<String>> examples = new HashMap<>();
+        Map<String,Integer> bySrc = new TreeMap<>();
+        Map<String,int[]> byCfType = new TreeMap<>();
+        Map<String,Integer> otherErr = new TreeMap<>();
+        int scanned=0, failed=0;
+        for (ChangeForm cf : ess.getChangeForms()) {
+            ChangeForm.Type t = cf.getType();
+            boolean isA = t==ChangeForm.Type.ACHR, isR = t==ChangeForm.Type.REFR;
+            if (!isA && !isR) continue;
+            if (onlyA && !isA) continue;
+            if (onlyR && !isR) continue;
+            if (scanned >= limit) break;
+            String ts = str(t);
+            byCfType.computeIfAbsent(ts, k->new int[3])[0]++;
+            scanned++;
+            ByteBuffer body = cf.getBodyData();
+            if (body == null) { byCfType.get(ts)[2]++; continue; }
+            body.order(ByteOrder.LITTLE_ENDIAN); ((Buffer)body).position(0);
+            try {
+                if (isA) new ChangeFormACHR(body, cf.getChangeFlags(), cf.getRefID(), Optional.empty(), ctx);
+                else     new ChangeFormRefr(body, cf.getChangeFlags(), cf.getRefID(), Optional.empty(), ctx);
+                byCfType.get(ts)[2]++;
+            } catch (Throwable ex) {
+                failed++; byCfType.get(ts)[1]++;
+                java.util.regex.Matcher m = P.matcher(chain(ex));
+                if (m.find()) {
+                    int et = Integer.parseInt(m.group(1));
+                    typeCounts.merge(et, 1, Integer::sum);
+                    bySrc.merge(ts+":"+et, 1, Integer::sum);
+                    List<String> ex5 = examples.computeIfAbsent(et, k->new ArrayList<>());
+                    if (ex5.size()<5) ex5.add(refStr(cf.getRefID()));
+                } else otherErr.merge(deepest(ex), 1, Integer::sum);
+            }
+        }
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"extradata-scan\",\"scanned\":").append(scanned).append(",\"failed\":").append(failed);
+        b.append(",\"unknownTypes\":[");
+        List<Map.Entry<Integer,Integer>> sorted = new ArrayList<>(typeCounts.entrySet());
+        sorted.sort((x,y)->Integer.compare(y.getValue(), x.getValue()));
+        int n=0; for (Map.Entry<Integer,Integer> e : sorted) {
+            if (n++>0) b.append(",");
+            b.append("{\"type\":").append(e.getKey()).append(",\"count\":").append(e.getValue()).append(",\"examples\":[");
+            List<String> ex5 = examples.get(e.getKey());
+            for (int i=0;i<ex5.size();i++){ if(i>0)b.append(","); b.append(jstr(ex5.get(i))); }
+            b.append("]}");
+        }
+        b.append("],\"unknownBySource\":{");
+        n=0; for (Map.Entry<String,Integer> e : bySrc.entrySet()){ if(n++>0)b.append(","); b.append(jstr(e.getKey())).append(":").append(e.getValue()); }
+        b.append("},\"perType\":{");
+        n=0; for (Map.Entry<String,int[]> e : byCfType.entrySet()){ if(n++>0)b.append(","); b.append(jstr(e.getKey())).append(":{\"scanned\":").append(e.getValue()[0]).append(",\"failed\":").append(e.getValue()[1]).append(",\"ok\":").append(e.getValue()[2]).append("}"); }
+        b.append("},\"otherFailures\":{");
+        n=0; for (Map.Entry<String,Integer> e : otherErr.entrySet()){ if(n>=15)break; if(n++>0)b.append(","); b.append(jstr(e.getKey())).append(":").append(e.getValue()); }
+        b.append("}}");
+        System.out.println(b);
+    }
+
+    // ---------- recon (READ; sync-aware parse-coverage scanner — the standing phantom test) ----------
+    // Strict-parses EVERY parseable changeform body type and classifies each failure. For an extra-data
+    // "Unknown type N" it records the PREDECESSOR type via reflection on the read-only analysis-overlay's
+    // ChangeFormExtraDataData.RECENT list (present only when the overlay is on the classpath) — so a phantom
+    // of an upstream stub (one consistent predecessor) is separable from a real type (varied predecessors).
+    // Re-run before/after every parse fix to confirm a whole phantom cluster cleared with no regressions.
+    static void recon(ESS ess, String[] args) {
+        ESS.ESSContext ctx = ess.getContext();
+        // Reflection accessor for the overlay's RECENT type-run-up list (graceful if running stock jar).
+        List<Integer> recent = null;
+        try {
+            Field f = ChangeFormExtraDataData.class.getField("RECENT");
+            @SuppressWarnings("unchecked") List<Integer> r = (List<Integer>) f.get(null);
+            recent = r;
+        } catch (Throwable ignore) { /* stock jar: no predecessor histogram */ }
+
+        java.util.regex.Pattern P = java.util.regex.Pattern.compile("Unknown ExtraData: type=(\\d+)");
+        Map<String,int[]> byType = new TreeMap<>();                       // cfType -> [ok,fail]
+        Map<String,Integer> byCategory = new TreeMap<>();                 // category -> count
+        Map<Integer,Integer> unkCount = new TreeMap<>();                  // unknown extra-type -> count
+        Map<Integer,TreeMap<Integer,Integer>> unkPred = new TreeMap<>();  // unknown type -> {predecessor -> count}
+        Map<String,Integer> nonExtraLoc = new TreeMap<>();                // non-extradata fail location -> count
+
+        for (ChangeForm cf : ess.getChangeForms()) {
+            String ty = str(cf.getType());
+            boolean parseable = ty.equals("FLST")||ty.equals("LVLN")||ty.equals("LVLI")||ty.equals("REFR")
+                ||ty.equals("ACHR")||ty.equals("NPC_")||ty.equals("RELA")||ty.equals("QUST");
+            if (!parseable) continue;
+            byType.computeIfAbsent(ty, k->new int[2]);
+            ByteBuffer body = cf.getBodyData(); if (body == null) continue;
+            body.order(ByteOrder.LITTLE_ENDIAN); ((Buffer)body).position(0);
+            if (recent != null) recent.clear();
+            try {
+                switch (ty) {
+                    case "FLST": new ChangeFormFLST(body, cf.getChangeFlags(), ctx); break;
+                    case "LVLN": case "LVLI": new ChangeFormLeveled(body, cf.getChangeFlags(), ctx); break;
+                    case "REFR": new ChangeFormRefr(body, cf.getChangeFlags(), cf.getRefID(), Optional.empty(), ctx); break;
+                    case "ACHR": new ChangeFormACHR(body, cf.getChangeFlags(), cf.getRefID(), Optional.empty(), ctx); break;
+                    case "NPC_": new ChangeFormNPC(body, cf.getChangeFlags(), ctx); break;
+                    case "RELA": new ChangeFormRela(body, cf.getChangeFlags(), cf.getRefID(), ctx); break;
+                    case "QUST": new ChangeFormQust(body, cf.getChangeFlags(), ctx); break;
+                }
+                byType.get(ty)[0]++;
+            } catch (Throwable ex) {
+                byType.get(ty)[1]++;
+                String dm = deepest(ex), path = chain(ex);
+                java.util.regex.Matcher um = P.matcher(dm);
+                if (um.find()) {
+                    int N = Integer.parseInt(um.group(1));
+                    byCategory.merge("extra-unknown-type", 1, Integer::sum);
+                    unkCount.merge(N, 1, Integer::sum);
+                    int pred = (recent != null && recent.size() >= 2) ? recent.get(recent.size()-2) : -1;
+                    unkPred.computeIfAbsent(N, k->new TreeMap<>()).merge(pred, 1, Integer::sum);
+                } else if (dm.contains("Excessive array count")) {
+                    byCategory.merge("excessive-array-count", 1, Integer::sum); nonExtraLoc.merge(locTag(path), 1, Integer::sum);
+                } else if (dm.contains("BufferUnderflow")) {
+                    byCategory.merge("buffer-underflow", 1, Integer::sum); nonExtraLoc.merge(locTag(path), 1, Integer::sum);
+                } else if (dm.contains("Unparsed")) {
+                    byCategory.merge("unparsed-tail", 1, Integer::sum); nonExtraLoc.merge(locTag(path), 1, Integer::sum);
+                } else {
+                    byCategory.merge("other:" + dm.replaceAll("[0-9]+","#"), 1, Integer::sum);
+                }
+            }
+        }
+
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"recon\",\"overlayLoaded\":").append(recent != null);
+        b.append(",\"perType\":{");
+        int n=0; for (Map.Entry<String,int[]> e : byType.entrySet()) { if (n++>0) b.append(",");
+            b.append(jstr(e.getKey())).append(":{\"ok\":").append(e.getValue()[0]).append(",\"fail\":").append(e.getValue()[1]).append("}"); }
+        b.append("},\"failureCategories\":{");
+        n=0; for (Map.Entry<String,Integer> e : sortByValueDesc(byCategory)) { if (n++>0) b.append(",");
+            b.append(jstr(e.getKey())).append(":").append(e.getValue()); }
+        b.append("},\"unknownTypes\":[");
+        List<Map.Entry<Integer,Integer>> us = new ArrayList<>(unkCount.entrySet());
+        us.sort((x,y)->Integer.compare(y.getValue(), x.getValue()));
+        n=0; for (Map.Entry<Integer,Integer> e : us) { if (n++>0) b.append(","); int N = e.getKey();
+            b.append("{\"type\":").append(N).append(",\"count\":").append(e.getValue()).append(",\"preds\":{");
+            int m=0; for (Map.Entry<Integer,Integer> p : unkPred.get(N).entrySet()) { if (m++>0) b.append(",");
+                b.append("\"").append(p.getKey()).append("\":").append(p.getValue()); }
+            b.append("}}"); }
+        b.append("],\"nonExtraLoc\":{");
+        n=0; for (Map.Entry<String,Integer> e : sortByValueDesc(nonExtraLoc)) { if (n++>0) b.append(",");
+            b.append(jstr(e.getKey())).append(":").append(e.getValue()); }
+        b.append("}}");
+        System.out.println(b);
+    }
+
+    // Tag a non-extradata failure by the element/region named in the exception chain.
+    static String locTag(String path) {
+        for (String k : new String[]{"ANIMATIONS","HAVOK","INVENTORY","EXTRADATA","ExtraData","ChangeFormInventoryItem",
+            "BASE_OBJECT","INITIAL","ChangeFormNPC","ChangeFormQust","ChangeFormFLST","Leveled","Rela"})
+            if (path.contains(k)) return k;
+        return "?";
+    }
+
+    static List<Map.Entry<String,Integer>> sortByValueDesc(Map<String,Integer> m) {
+        List<Map.Entry<String,Integer>> l = new ArrayList<>(m.entrySet());
+        l.sort((x,y)->Integer.compare(y.getValue(), x.getValue()));
+        return l;
+    }
+
+    // ---------- changeform-diff (READ; localize baked state across two same-playthrough saves) ----------
+    static void changeformDiff(ESS essA, String[] args) throws Exception {
+        String saveB = arg(args, 2, null);
+        if (saveB == null) { err("changeform-diff needs <saveB> [refidHex|--quests]"); return; }
+        boolean quests = has(args, "--quests");
+        ESS essB = ESS.readESS(Paths.get(saveB), new ModelBuilder(new ProgressModel(1))).ESS;
+        Map<String,ChangeForm> ia = indexCF(essA), ib = indexCF(essB);
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"changeform-diff\",\"saveB\":").append(jstr(saveB));
+        if (quests) {
+            b.append(",\"mode\":\"quests\",\"changed\":[");
+            int n=0;
+            for (Map.Entry<String,ChangeForm> e : ia.entrySet()) {
+                ChangeForm a = e.getValue();
+                if (a.getType()!=ChangeForm.Type.QUST) continue;
+                ChangeForm bb = ib.get(e.getKey());
+                if (bb==null) continue;
+                if (!Arrays.equals(cfBytes(a), cfBytes(bb))) { if(n++>0) b.append(","); b.append(diffForm(essA,a,essB,bb)); }
+            }
+            b.append("],\"changedCount\":").append(n).append("}");
+        } else {
+            String refHex = null;
+            for (int i=3;i<args.length;i++){ if(!args[i].startsWith("--")){ refHex=args[i]; break; } }
+            if (refHex==null) refHex="00000014";
+            Long fid = parseHex(refHex);
+            ChangeForm a = pickForm(ia, fid), bb = pickForm(ib, fid);
+            b.append(",\"mode\":\"single\",\"refid\":").append(jstr(refHex));
+            if (a==null || bb==null) { b.append(",\"found\":false}"); System.out.println(b); return; }
+            b.append(",\"found\":true,\"diff\":").append(diffForm(essA,a,essB,bb)).append("}");
+        }
+        System.out.println(b);
+    }
+    static ChangeForm pickForm(Map<String,ChangeForm> idx, Long fid) {
+        if (fid==null) return null;
+        ChangeForm best=null;
+        for (ChangeForm c : idx.values())
+            if (c.getRefID()!=null && (c.getRefID().FORMID & 0xFFFFFF)==(fid.intValue() & 0xFFFFFF)) {
+                if ("ACHR".equalsIgnoreCase(str(c.getType()))) return c;
+                if (best==null) best=c;
+            }
+        return best;
+    }
+    static String diffForm(ESS essA, ChangeForm a, ESS essB, ChangeForm b) {
+        StringBuilder o = new StringBuilder("{");
+        o.append("\"refid\":").append(jstr(refStr(a.getRefID()))).append(",\"type\":").append(jstr(str(a.getType())));
+        byte[] xa = cfBytes(a), xb = cfBytes(b);
+        o.append(",\"lenA\":").append(xa.length).append(",\"lenB\":").append(xb.length);
+        int min=Math.min(xa.length,xb.length);
+        int pre=0; while (pre<min && xa[pre]==xb[pre]) pre++;
+        int suf=0; while (suf<(min-pre) && xa[xa.length-1-suf]==xb[xb.length-1-suf]) suf++;
+        boolean identical = (xa.length==xb.length && pre==xa.length);
+        o.append(",\"rawIdentical\":").append(identical);
+        if (!identical) {
+            o.append(",\"firstDivergeOffset\":").append(pre).append(",\"commonSuffix\":").append(suf);
+            o.append(",\"windowA\":").append(jstr(hex(xa, pre, Math.min(xa.length, pre+48))));
+            o.append(",\"windowB\":").append(jstr(hex(xb, pre, Math.min(xb.length, pre+48))));
+            o.append(",\"refIdCandidates\":[").append(refIdCandidates(essB, xb, pre, Math.min(xb.length, pre+24))).append("]");
+        }
+        o.append(",\"structured\":").append(structuredDiff(flatten(essA,a), flatten(essB,b)));
+        // structured INVENTORY diff (item added/removed/count-changed) — inventory parses via typed fields
+        Map<String,Long> invA = inventoryMap(essA,a), invB = inventoryMap(essB,b);
+        if (!invA.isEmpty() || !invB.isEmpty()) o.append(",\"inventoryDiff\":").append(inventoryDiff(invA, invB));
+        o.append("}");
+        return o.toString();
+    }
+    /** itemRefID -> total count. Reads the "inventory" array from getValues() (always holds the
+     *  bestEffort partial; the typed INVENTORY field stays null when the array read throws). */
+    static Map<String,Long> inventoryMap(ESS ess, ChangeForm cf) {
+        Map<String,Long> m = new LinkedHashMap<>();
+        try {
+            ChangeFormData d = cf.getData(Optional.empty(), ess.getContext(), true);
+            if (!(d instanceof GeneralElement)) return m;
+            Object inv = null;
+            for (Map.Entry<?,?> e : ((GeneralElement)d).getValues().entrySet())
+                if (String.valueOf(e.getKey()).equalsIgnoreCase("inventory")) { inv = e.getValue(); break; }
+            if (inv instanceof Object[]) for (Object o : (Object[]) inv) if (o instanceof ChangeFormInventoryItem) {
+                ChangeFormInventoryItem it = (ChangeFormInventoryItem) o;
+                if (it.ITEM != null) m.merge(refStr(it.ITEM), (long) it.COUNT, Long::sum);
+            }
+        } catch (Throwable ignore) {}
+        return m;
+    }
+    static String inventoryDiff(Map<String,Long> a, Map<String,Long> b) {
+        StringBuilder o = new StringBuilder("{\"added\":[");
+        int n=0; for (Map.Entry<String,Long> e : b.entrySet()) if (!a.containsKey(e.getKey())) { if(n++>0)o.append(","); o.append("{\"item\":").append(jstr(e.getKey())).append(",\"count\":").append(e.getValue()).append("}"); }
+        o.append("],\"removed\":["); n=0; for (Map.Entry<String,Long> e : a.entrySet()) if (!b.containsKey(e.getKey())) { if(n++>0)o.append(","); o.append("{\"item\":").append(jstr(e.getKey())).append(",\"count\":").append(e.getValue()).append("}"); }
+        o.append("],\"countChanged\":["); n=0; for (Map.Entry<String,Long> e : a.entrySet()) { Long vb=b.get(e.getKey()); if (vb!=null && !vb.equals(e.getValue())) { if(n++>0)o.append(","); o.append("{\"item\":").append(jstr(e.getKey())).append(",\"a\":").append(e.getValue()).append(",\"b\":").append(vb).append("}"); } }
+        o.append("],\"itemsA\":").append(a.size()).append(",\"itemsB\":").append(b.size()).append("}");
+        return o.toString();
+    }
+    /** Resolve candidate RefIDs at the divergence using ReSaver's OWN decoder (read path). Heuristic. */
+    static String refIdCandidates(ESS ess, byte[] data, int start, int end) {
+        ESS.ESSContext ctx = ess.getContext();
+        StringBuilder s = new StringBuilder(); int n=0;
+        for (int off=start; off<end && off<data.length; off++) {
+            try {
+                ByteBuffer bb = ByteBuffer.wrap(data, off, Math.min(8, data.length-off)).order(ByteOrder.LITTLE_ENDIAN);
+                RefID r = ctx.readRefID(bb);
+                if (r != null && r.PLUGIN != null && r.FORMID != 0) {
+                    if (n++>0) s.append(",");
+                    s.append("{\"offset\":").append(off).append(",\"ref\":").append(jstr(refStr(r))).append("}");
+                    if (n>=8) break;
+                }
+            } catch (Throwable ignore) {}
+        }
+        return s.toString();
+    }
+    static Map<String,String> flatten(ESS ess, ChangeForm cf) {
+        Map<String,String> m = new LinkedHashMap<>();
+        try {
+            ChangeFormData d = cf.getData(Optional.empty(), ess.getContext(), true);
+            if (d instanceof GeneralElement) flattenGE("", (GeneralElement)d, m, new int[]{0});
+            else if (d != null) m.put("", str(d));
+        } catch (Throwable t) { m.put("_parseError", t.toString()); }
+        return m;
+    }
+    static void flattenGE(String prefix, GeneralElement ge, Map<String,String> m, int[] cap) {
+        for (Map.Entry<?,?> e : ge.getValues().entrySet()) {
+            if (cap[0]++ > 5000) { m.put(prefix+"/_capped","true"); return; }
+            String key = prefix + "/" + e.getKey();
+            Object v = e.getValue();
+            if (v instanceof GeneralElement) flattenGE(key, (GeneralElement)v, m, cap);
+            else if (v instanceof Object[]) { Object[] a=(Object[])v; for(int i=0;i<a.length;i++){ if(a[i] instanceof GeneralElement) flattenGE(key+"["+i+"]",(GeneralElement)a[i],m,cap); else m.put(key+"["+i+"]", str(a[i])); } }
+            // primitive arrays: stringify by CONTENT (default Object.toString is a per-load identity hash -> false diffs)
+            else if (v instanceof byte[])  m.put(key, Arrays.toString((byte[])v));
+            else if (v instanceof float[]) m.put(key, Arrays.toString((float[])v));
+            else if (v instanceof int[])   m.put(key, Arrays.toString((int[])v));
+            else if (v instanceof short[]) m.put(key, Arrays.toString((short[])v));
+            else if (v instanceof long[])  m.put(key, Arrays.toString((long[])v));
+            else m.put(key, str(v));
+        }
+    }
+    static String structuredDiff(Map<String,String> fa, Map<String,String> fb) {
+        // Detection uses FULL values; output is capped + noise-labeled so real signal stands out.
+        StringBuilder o = new StringBuilder("{\"changed\":[");
+        int n=0, signal=0;
+        Set<String> all = new TreeSet<>(); all.addAll(fa.keySet()); all.addAll(fb.keySet());
+        for (String k : all) {
+            String va=fa.get(k), vb=fb.get(k);
+            if (!Objects.equals(va,vb)) {
+                boolean noise = isNoisePath(k);
+                if (!noise) signal++;
+                if (n++>0) o.append(",");
+                o.append("{\"path\":").append(jstr(k)).append(",\"noise\":").append(noise)
+                 .append(",\"a\":").append(jstr(cap(va))).append(",\"b\":").append(jstr(cap(vb))).append("}");
+                if (n>=80) { o.append(",{\"_truncated\":true}"); break; }
+            }
+        }
+        o.append("],\"changedCount\":").append(n).append(",\"signalCount\":").append(signal).append("}");
+        return o.toString();
+    }
+    // Expected churn between adjacent saves (physics/position/unparsed tails) — labeled so a real
+    // spell/ability/effect RefID change isn't buried.
+    static boolean isNoisePath(String p){ String s=p.toLowerCase(); return s.contains("havok")||s.contains("unparsed_data")||s.contains("unknown_bytes")||s.contains("/initial/pos")||s.contains("/initial/rot")||s.contains("/scale"); }
+    static String cap(String s){ if(s==null) return null; return s.length()<=180 ? s : s.substring(0,180)+"…(len "+s.length()+")"; }
+    static String hex(byte[] d, int start, int end) {
+        StringBuilder s = new StringBuilder();
+        for (int i=start; i<end && i<d.length; i++) { s.append(String.format("%02x", d[i]&0xFF)); if (i+1<end && i+1<d.length) s.append(" "); }
+        return s.toString();
+    }
+    static String chain(Throwable ex){ StringBuilder b=new StringBuilder(); for(Throwable t=ex;t!=null;t=t.getCause()) b.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append(" || "); return b.toString(); }
+    static String deepest(Throwable ex){ Throwable t=ex; while(t.getCause()!=null) t=t.getCause(); String m=t.getClass().getSimpleName()+": "+t.getMessage(); return m.length()>120?m.substring(0,120):m; }
+
+    // ---------- freeze-report (READ; offline VM-freeze-risk diagnostic) ----------
+    // Heuristic known freeze-causing scripts seen on this install (see project_vm_freeze_followup).
+    static final String[] KNOWN_FREEZE = {"diversedragon","vddmainsct","_reaper","soulreaper"};
+
+    static void freezeReport(ESS ess, Papyrus pap) {
+        int[] undef = pap.countUndefinedElements();
+        int unatt = pap.countUnattachedInstances();
+        int suspended = pap.getSuspendedStacks().size();
+        int funcMsgs = pap.getFunctionMessages().size();
+        int unbinds = pap.getUnbinds().size();
+        int activeTotal=0, terminated=0, undefinedActive=0;
+        Map<String,int[]> activeByScript = new HashMap<>(), suspByScript = new HashMap<>();
+        for (ActiveScript a : pap.getActiveScripts().values()) {
+            activeTotal++;
+            if (a.isTerminated()) terminated++;
+            if (a.isUndefined()) undefinedActive++;
+            String s = activeScriptName(a);
+            if (s != null) activeByScript.computeIfAbsent(s, k->new int[1])[0]++;
+        }
+        for (SuspendedStack ss : pap.getSuspendedStacks().values()) {
+            String s = (ss.getScript()!=null) ? str(ss.getScript().getName()) : null;
+            if (s != null) suspByScript.computeIfAbsent(s, k->new int[1])[0]++;
+        }
+        // cross-ref known freeze-causers across active + suspended stacks
+        Map<String,Integer> flagged = new TreeMap<>();
+        for (Map<String,int[]> m : Arrays.asList(activeByScript, suspByScript))
+            for (Map.Entry<String,int[]> e : m.entrySet()) {
+                String ln = e.getKey().toLowerCase();
+                for (String k : KNOWN_FREEZE) if (ln.contains(k)) flagged.merge(e.getKey(), e.getValue()[0], Integer::sum);
+            }
+
+        // riskLevel reflects actual save PATHOLOGY; known-freeze-mod presence is a separate watchlist
+        // (an active known-bad mod is normal — it's only a "monitor this" signal, not an imminent freeze).
+        List<String> signals = new ArrayList<>();
+        if (undef.length>1 && undef[1]>0) signals.add("undefinedThreads="+undef[1]);
+        if (undefinedActive>0) signals.add("undefinedActiveScripts="+undefinedActive);
+        if (suspended>50) signals.add("highSuspendedStacks="+suspended);
+        else if (suspended>0) signals.add("suspendedStacks="+suspended);
+        if (terminated>0) signals.add("terminatedButPresent="+terminated);
+        if (unatt>0) signals.add("unattached="+unatt);
+        if (!flagged.isEmpty()) signals.add("watchlist:knownFreezeScriptsActive="+flagged.size());
+        boolean hi = (undef.length>1 && undef[1]>0) || undefinedActive>0 || suspended>50;
+        boolean mod = suspended>0 || (undef.length>0 && undef[0]>20) || funcMsgs>20 || unatt>0 || terminated>0;
+        String level = hi ? "HIGH" : mod ? "MODERATE" : "LOW";
+
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"freeze-report\",\"riskLevel\":").append(jstr(level));
+        b.append(",\"signals\":["); for (int i=0;i<signals.size();i++){ if(i>0)b.append(","); b.append(jstr(signals.get(i))); } b.append("]");
+        b.append(",\"counts\":{\"scriptInstances\":").append(pap.getScriptInstances().size())
+         .append(",\"activeScripts\":").append(activeTotal).append(",\"terminated\":").append(terminated)
+         .append(",\"undefinedActiveScripts\":").append(undefinedActive)
+         .append(",\"suspendedStacks\":").append(suspended).append(",\"functionMessages\":").append(funcMsgs)
+         .append(",\"unbinds\":").append(unbinds).append(",\"undefinedElements\":").append(undef.length>0?undef[0]:-1)
+         .append(",\"undefinedThreads\":").append(undef.length>1?undef[1]:-1).append(",\"unattached\":").append(unatt).append("}");
+        b.append(",\"knownFreezeScripts\":{"); int n=0; for (Map.Entry<String,Integer> e : flagged.entrySet()){ if(n++>0)b.append(","); b.append(jstr(e.getKey())).append(":").append(e.getValue()); } b.append("}");
+        b.append(",\"topActiveByScript\":["); appendTop(b, activeByScript, 12); b.append("]");
+        b.append(",\"topSuspendedByScript\":["); appendTop(b, suspByScript, 12); b.append("]");
+        b.append(",\"note\":\"heuristic; known-freeze list seeded from project_vm_freeze_followup; in-game load is the real test\"}");
+        System.out.println(b);
+    }
+    static String activeScriptName(ActiveScript a) {
+        try {
+            List<StackFrame> frames = a.getStackFrames();
+            if (frames != null && !frames.isEmpty()) {
+                StackFrame f = frames.get(0);
+                if (f.getScriptName() != null) return str(f.getScriptName());
+                if (f.getScript() != null) return str(f.getScript().getName());
+            }
+        } catch (Throwable ignore) {}
+        return null;
+    }
+    static void appendTop(StringBuilder b, Map<String,int[]> m, int n) {
+        List<Map.Entry<String,int[]>> l = new ArrayList<>(m.entrySet());
+        l.sort((x,y)->Integer.compare(y.getValue()[0], x.getValue()[0]));
+        for (int i=0; i<Math.min(n, l.size()); i++) { if(i>0)b.append(","); b.append("{\"script\":").append(jstr(l.get(i).getKey())).append(",\"count\":").append(l.get(i).getValue()[0]).append("}"); }
+    }
+
     // ---------- helpers ----------
 
     static HasID resolveEID(Papyrus pap, PapyrusContext ctx, String hex) {
@@ -479,6 +1153,100 @@ public class ResaverCLI {
         }
         return p;
     }
+    // ---------- globaldata (lens 2): reflection-read the 3 Global Data tables; diff by type ----------
+    // ReSaver keeps TABLE1/2/3 (List<GlobalData>) PRIVATE and most blocks as raw DefaultGlobalDataBlock.
+    // We read type + serialized block bytes (read-only) → diff between saves. Type 100=ProcessLists is the
+    // prime suspect for an equip-gated active-effect/process trigger the changeform doesn't hold.
+    @SuppressWarnings("unchecked")
+    static List<GlobalData> gdTable(ESS ess, String field) {
+        try { java.lang.reflect.Field f = ESS.class.getDeclaredField(field); f.setAccessible(true);
+               Object v = f.get(ess); return (v instanceof List) ? (List<GlobalData>) v : null; }
+        catch (Throwable t) { return null; }
+    }
+    static List<GlobalData> gdBlocks(ESS ess) {
+        List<GlobalData> all = new ArrayList<>();
+        for (String f : new String[]{"TABLE1","TABLE2","TABLE3"}) { List<GlobalData> t = gdTable(ess, f); if (t != null) all.addAll(t); }
+        return all;
+    }
+    static int gdSize(GlobalData gd) { try { GlobalDataBlock blk = gd.getDataBlock(); return blk != null ? blk.calculateSize() : gd.calculateSize(); } catch (Throwable t) { return -1; } }
+    // serialized block content; skip the heavy Papyrus block (1001) — size-only there.
+    static byte[] gdBytes(GlobalData gd) {
+        if (gd.getType() == 1001) return null;
+        try { GlobalDataBlock blk = gd.getDataBlock(); if (blk == null) return null;
+              int sz = blk.calculateSize(); if (sz < 0 || sz > 64*1024*1024) return null;
+              ByteBuffer buf = ByteBuffer.allocate(sz).order(ByteOrder.LITTLE_ENDIAN); blk.write(buf); return buf.array(); }
+        catch (Throwable t) { return null; }
+    }
+    static String gdSha(byte[] bytes) {
+        if (bytes == null) return null;
+        try { byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+              StringBuilder s = new StringBuilder(); for (int i=0;i<10 && i<h.length;i++) s.append(String.format("%02x", h[i])); return s.toString(); }
+        catch (Throwable t) { return null; }
+    }
+    static String gdName(int t) {
+        switch (t) {
+            case 0: return "MiscStats"; case 1: return "PlayerLocation"; case 2: return "TES";
+            case 3: return "GlobalVariables"; case 4: return "CreatedObjects"; case 5: return "Effects(IMOD)";
+            case 6: return "WeatherSystem"; case 7: return "AudioData"; case 8: return "SkyCells";
+            case 100: return "ProcessLists"; case 101: return "Combat"; case 102: return "Interface";
+            case 103: return "ActorCauses"; case 104: return "Unknown104"; case 105: return "DetectionManager";
+            case 106: return "LocationMetaData"; case 107: return "QuestStaticData"; case 108: return "StoryTeller";
+            case 109: return "MagicFavorites"; case 110: return "PlayerControls"; case 111: return "StoryEventManager";
+            case 112: return "IngredientShared"; case 113: return "MenuControls"; case 114: return "MenuTopicManager";
+            case 1001: return "Papyrus"; case 1002: return "AnimObjects"; case 1003: return "Timer";
+            case 1004: return "SynchronizedAnimations"; case 1005: return "Main"; default: return "Type" + t;
+        }
+    }
+    static void globalDataOp(ESS ess) {
+        List<GlobalData> all = gdBlocks(ess);
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"globaldata\",\"reflectionOk\":").append(!all.isEmpty()).append(",\"blocks\":[");
+        int n = 0;
+        for (GlobalData gd : all) { int type = gd.getType();
+            if (n++ > 0) b.append(",");
+            b.append("{\"type\":").append(type).append(",\"name\":").append(jstr(gdName(type)))
+             .append(",\"size\":").append(gdSize(gd)).append(",\"sha\":").append(jstr(gdSha(gdBytes(gd)))).append("}");
+        }
+        b.append("],\"count\":").append(n).append("}");
+        System.out.println(b);
+    }
+    static void globalDataDiff(ESS essA, String[] args) throws Exception {
+        String saveB = arg(args, 2, null);
+        if (saveB == null) { err("globaldata-diff needs <saveB>"); return; }
+        ESS essB = ESS.readESS(Paths.get(saveB), new ModelBuilder(new ProgressModel(1))).ESS;
+        Map<Integer,byte[]> ma = new LinkedHashMap<>(), mb = new LinkedHashMap<>();
+        Map<Integer,Integer> sa = new LinkedHashMap<>(), sb = new LinkedHashMap<>();
+        for (GlobalData gd : gdBlocks(essA)) { ma.put(gd.getType(), gdBytes(gd)); sa.put(gd.getType(), gdSize(gd)); }
+        for (GlobalData gd : gdBlocks(essB)) { mb.put(gd.getType(), gdBytes(gd)); sb.put(gd.getType(), gdSize(gd)); }
+        StringBuilder b = new StringBuilder();
+        b.append("{\"ok\":true,\"op\":\"globaldata-diff\",\"saveB\":").append(jstr(saveB))
+         .append(",\"reflectionOk\":").append(!ma.isEmpty() && !mb.isEmpty()).append(",\"changed\":[");
+        int n = 0;
+        Set<Integer> types = new TreeSet<>(); types.addAll(ma.keySet()); types.addAll(mb.keySet());
+        for (int type : types) {
+            boolean inA = ma.containsKey(type), inB = mb.containsKey(type);
+            byte[] xa = ma.get(type), xb = mb.get(type);
+            boolean changed = (!inA || !inB) ? true
+                : (xa == null || xb == null) ? !Objects.equals(sa.get(type), sb.get(type))
+                : !Arrays.equals(xa, xb);
+            if (!changed) continue;
+            if (n++ > 0) b.append(",");
+            b.append("{\"type\":").append(type).append(",\"name\":").append(jstr(gdName(type)))
+             .append(",\"inA\":").append(inA).append(",\"inB\":").append(inB)
+             .append(",\"sizeA\":").append(sa.getOrDefault(type,-1)).append(",\"sizeB\":").append(sb.getOrDefault(type,-1));
+            if (inA && inB && xa != null && xb != null) {
+                int min = Math.min(xa.length, xb.length), pre = 0; while (pre < min && xa[pre] == xb[pre]) pre++;
+                b.append(",\"firstDivergeOffset\":").append(pre)
+                 .append(",\"windowA\":").append(jstr(hex(xa, pre, Math.min(xa.length, pre+48))))
+                 .append(",\"windowB\":").append(jstr(hex(xb, pre, Math.min(xb.length, pre+48))))
+                 .append(",\"refIdCandidates\":[").append(refIdCandidates(essB, xb, pre, Math.min(xb.length, pre+24))).append("]");
+            }
+            b.append("}");
+        }
+        b.append("],\"changedCount\":").append(n).append("}");
+        System.out.println(b);
+    }
+
     static void err(String m) { System.out.println("{\"ok\":false,\"error\":" + jstr(m) + "}"); }
     static void kv(StringBuilder b, String k, String v) { b.append(",\"").append(k).append("\":").append(jstr(v)); }
     static void kvn(StringBuilder b, String k, long v) { b.append(",\"").append(k).append("\":").append(v); }

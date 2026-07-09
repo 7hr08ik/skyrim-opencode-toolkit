@@ -27,7 +27,8 @@ All under `tools/`:
 | **AutoMod CLI** | NIF meshes, BSA archives, audio, MCM, ESP one-liners | `bash tools/automod-cli.sh <module> <command> --json` |
 | **PyFFI** | NIF geometry edit — **NiTriShape (LE-format) ONLY** (Python 3.10) | See PyFFI section below |
 | **PyNifly** | NIF read/write incl. **BSTriShape (SSE)** + **animation/controller authoring** (Python, prebuilt DLL) | See PyNifly section below |
-| **ReSaver CLI** | Headless `.ess` save parse / query / cross-reference / clean | `bash tools/resaver-cli.sh <info\|dump\|find\|find-refs\|worries\|set-global\|set-var\|clean> <save.ess>` — all writes are dry-run unless `--apply` (which writes a NEW file, never overwriting the input); resolve FormID→EditorID via `tools/resaver-resolve-names.js`. Needs JDK 17+ (JDK 21 LTS recommended; e.g. `winget install Microsoft.OpenJDK.21`) + ReSaver's jar (see install section). |
+| **ReSaver CLI** | Headless `.ess` save parse / query / cross-reference / clean / changeform-level diagnostics | `bash tools/resaver-cli.sh <op> <save.ess>` — read ops: `info\|dump\|find\|find-refs\|worries\|recon\|changeform\|extradata-scan\|changeform-diff\|freeze-report\|globaldata\|globaldata-diff`; write ops (dry-run unless `--apply`, always a NEW file): `set-global\|set-var\|clean\|reset-havok\|cleanse-formlists\|remove-created`; `verify-roundtrip` self-test. Every `--apply` is verify-gated (re-read==model or delete+fail). Resolve FormID→EditorID via `tools/resaver-resolve-names.js`. Needs JDK 17+ + ReSaver's jar (see install section). |
+| **cosave-info** | READ-ONLY structural survey of an SKSE `.skse` co-save → JSON (which mods stashed co-save data + how much) | `bash tools/cosave-cli.sh <cosave.skse>` (Python 3; the cosave sits next to its `.ess`) |
 
 > **Note**: Install the tools you need into a `tools/` folder in your game directory; the setup prompt walks through this. See the [xeditlib](https://github.com/WingedGuardian/xeditlib) repo for XEditLib setup. NifSkope and Blender (used for NIF render-verification and mesh repair — see below) are large external GUI apps installed separately, not bundled.
 
@@ -36,9 +37,9 @@ All under `tools/`:
 None of the modding tools are bundled — install only the ones you need. Per tool: what it is, how to acquire it, and a quick verify.
 
 - **xeditlib** — Node.js wrapper around XEditLib.dll for programmatic ESP/ESM read/write.
-  - Acquire: `npm install github:WingedGuardian/xeditlib` (installs from GitHub; the bare `npm install xeditlib` works only once it's published to the npm registry).
+  - Acquire: run `npm install github:WingedGuardian/xeditlib` **from the toolkit root** (installs from GitHub; the bare `npm install xeditlib` works only once it's published to the npm registry). Installing at the root puts `node_modules/xeditlib` where Node's upward lookup finds it from every bundled script (`tools/xelib/*.js`, `tools/resaver-resolve-names.js`, `examples/*.js` all `require('xeditlib')`). The bundled `XEditLib.dll` + `*.Hardcoded.dat` load relative to the package folder, so the scripts are cwd-independent once installed.
   - **Registry requirement**: XEditLib loads in `gmSSE` mode (game mode 4) even on VR, so it reads the game path from the **SSE** registry key. If `HKLM\SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition` is missing (common on a VR-only install), ESP loads fail. Create it from an **admin** terminal: `reg add "HKLM\SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition" /v "Installed Path" /t REG_SZ /d "<GAME_DIR>\" /f`.
-  - Verify: `node -e "require('xeditlib')"` exits clean.
+  - Verify: from the toolkit root, `node -e "require('xeditlib')"` exits clean.
 - **Champollion** — decompiles Papyrus `.pex` → `.psc`.
   - Acquire: download a release from github.com/Orvid/Champollion/releases and unpack into `tools/Champollion/`.
   - Verify: `tools/Champollion/Champollion.exe --help`.
@@ -71,9 +72,12 @@ None of the modding tools are bundled — install only the ones you need. Per to
 - **NifSkope** — independent visual NIF render gate (GUI).
   - Acquire: download a release from github.com/niftools/nifskope/releases.
   - Verify: launch it and open any NIF.
-- **ReSaver CLI** — headless `.ess` save parse / cross-reference / clean.
+- **ReSaver CLI** — headless `.ess` save parse / cross-reference / clean / changeform-level diagnostics.
   - Acquire: download ReSaver from the FallrimTools page (Nexus mod 5031) and drop `ReSaver.jar` plus its `lib/` folder into `tools/resaver-cli/`; needs JDK 17+ (JDK 21 LTS recommended; e.g. `winget install Microsoft.OpenJDK.21`). The wrapper auto-compiles its small driver on first run.
+  - The read/diagnostic ops layer a small **analysis overlay** (modified ReSaver source, Apache-2.0 — see `tools/resaver-cli/analysis-overlay/NOTICE.md`) in front of your jar for extra changeform parse coverage; write ops always run the STOCK jar (corruption safety), and if the overlay can't compile against your ReSaver version the wrapper falls back to stock parsing automatically.
   - Verify: `bash tools/resaver-cli.sh info <save.ess>` prints JSON.
+- **cosave-info** — READ-ONLY structural survey of an SKSE `.skse` co-save (which mods stashed co-save data + how much — the mod-state landscape the `.ess` never exposes). No install beyond Python 3.
+  - Verify: `bash tools/cosave-cli.sh <SaveN_...>.skse` prints JSON (the `.skse` sits next to its `.ess`).
 - **`tools/nexus.sh`** — built-in Nexus API helper (no install). Needs your Nexus key per the Nexus section below.
   - Verify: `bash tools/nexus.sh mod <id>` prints a mod's name/version.
 

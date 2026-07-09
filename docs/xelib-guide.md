@@ -8,14 +8,26 @@ This means you can read, inspect, diff, and modify ESP/ESM files with code inste
 
 ## Installation
 
+Run this **from the toolkit root** (the folder containing `tools/` and `examples/`):
+
 ```bash
 npm install github:WingedGuardian/xeditlib
 ```
 
+Installing at the root puts `node_modules/xeditlib` where Node's upward module lookup can find it
+from every bundled script — `tools/xelib/*.js`, `tools/resaver-resolve-names.js`, and `examples/*.js`
+all `require('xeditlib')` and resolve it from here. (Install it somewhere deeper and those scripts
+throw `MODULE_NOT_FOUND`.)
+
 This installs:
 - `xelib.js` -- The Node.js wrapper (all 163 functions with correct FFI signatures)
-- `XEditLib.dll` -- The Delphi-compiled binary
+- `XEditLib.dll` + the `*.Hardcoded.dat` game-data files -- the Delphi-compiled binary and its data.
+  `xelib.js` loads the DLL relative to its own package folder, and XEditLib finds the `.dat` files
+  next to the DLL, so **the scripts work regardless of your current working directory** once the
+  package is installed at the root.
 - `koffi` -- The FFI library for calling native DLL functions from Node.js
+
+Verify it resolves: from the toolkit root, `node -e "require('xeditlib')"` should exit clean.
 
 ## Critical Setup: Registry Key
 
@@ -26,7 +38,8 @@ HKLM\SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition
   Installed Path = C:\path\to\your\Skyrim VR\
 ```
 
-If this key doesn't exist, create it:
+If this key doesn't exist, create it **from an elevated (Run as administrator) terminal** — writing
+under `HKLM` requires admin rights, and a normal shell fails with `ERROR: Access is denied.`:
 ```bash
 reg add "HKLM\SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition" /v "Installed Path" /t REG_SZ /d "C:\path\to\your\Skyrim VR\\" /f
 ```

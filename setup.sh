@@ -84,6 +84,20 @@ else
     fi
 fi
 
+# --- Detect Python 3 (needed for cosave-info, save analysis, PyFFI/PyNifly; do NOT auto-install) ---
+echo ""
+echo "Checking for Python 3..."
+PY_FOUND=""
+for c in "py -3" "python" "python3"; do
+    if $c -c 'import sys; sys.exit(0 if sys.version_info[0]==3 else 1)' >/dev/null 2>&1; then
+        PY_FOUND="$c"; echo "  Found Python 3: '$c' -> $($c --version 2>&1)"; break
+    fi
+done
+if [ -z "$PY_FOUND" ]; then
+    echo "  Python 3 not found. It's needed for cosave-info and the save-analysis scripts (and PyFFI/PyNifly if you use them)."
+    echo "  Install it from python.org (or 'winget install Python.Python.3.12') and re-run — the bundled tools try 'py -3', 'python', then 'python3'."
+fi
+
 # --- Detect .NET SDK (needed for Spriggit / AutoMod; do NOT auto-install) ---
 echo ""
 echo "Checking for the .NET SDK..."
@@ -202,6 +216,7 @@ echo " Optional modding tools (install as needed)"
 echo "--------------------------------------------"
 echo "These are NOT bundled. Ask Claude to set up any you want, or install yourself:"
 echo "  xeditlib     -- programmatic ESP read/write:  npm install github:WingedGuardian/xeditlib"
+echo "                  (run from THIS toolkit root so the bundled tools/ + examples/ scripts resolve it)"
 echo "  Champollion  -- Papyrus .pex -> .psc:         github.com/Orvid/Champollion/releases"
 echo "  Caprica      -- Papyrus .psc -> .pex:         github.com/Orvid/Caprica/releases"
 echo "  Spriggit     -- ESP <-> YAML editing:         dotnet tool install Spriggit.CLI"
@@ -221,5 +236,6 @@ echo "  NifSkope     -- independent visual NIF render gate:    github.com/niftoo
 echo "  ReSaver CLI  -- headless .ess parse/cross-ref/clean:   download ReSaver from Nexus mod 5031"
 echo "                  (FallrimTools); drop ReSaver.jar + lib/ into tools/resaver-cli/; needs JDK 17+;"
 echo "                  the wrapper auto-compiles its driver on first run (tools/resaver-cli.sh)"
+echo "  cosave-info  -- read-only SKSE .skse co-save survey (bundled): bash tools/cosave-cli.sh <save.skse>"
 echo ""
 echo "You're ready to go! Start asking Claude about your mods."
