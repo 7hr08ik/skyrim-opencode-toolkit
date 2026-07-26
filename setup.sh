@@ -10,12 +10,18 @@ set -e
 
 GAME_DIR="$(pwd)"
 USERNAME="$(whoami)"
+# Native-Windows form of the game dir (C:/...), for paths we WRITE into CLAUDE.md.
+# `pwd` under Git Bash/MSYS returns an MSYS path (/c/...) that Claude's file tools and
+# PowerShell can't open; `pwd -W` returns the Windows form. Keep $GAME_DIR (MSYS) for the
+# filesystem work below -- both forms work there -- and use this one only for substitution.
+GAME_ROOT_WIN=$(pwd -W 2>/dev/null || pwd)
+GAME_ROOT_WIN=$(printf '%s' "$GAME_ROOT_WIN" | tr '\134' '/')
 
 echo "============================================"
 echo " Skyrim Claude Code Toolkit -- Setup"
 echo "============================================"
 echo ""
-echo "Game directory: $GAME_DIR"
+echo "Game directory: $GAME_ROOT_WIN"
 echo ""
 
 # --- Verify this looks like a Skyrim install ---
@@ -134,8 +140,15 @@ DOCUMENTS_DIR=$(powershell -NoProfile -Command "[Environment]::GetFolderPath('My
 DOCUMENTS_DIR=$(printf '%s' "$DOCUMENTS_DIR" | tr '\134' '/')
 LOCALAPPDATA_DIR="${LOCALAPPDATA:-C:/Users/$USERNAME/AppData/Local}"
 LOCALAPPDATA_DIR=$(printf '%s' "$LOCALAPPDATA_DIR" | tr '\134' '/')
-# Which Skyrim variant's config folder exists? (VR vs SE) -- default to Skyrim VR.
-if [ -d "$DOCUMENTS_DIR/My Games/Skyrim Special Edition" ] && [ ! -d "$DOCUMENTS_DIR/My Games/Skyrim VR" ]; then
+# Which Skyrim variant is this? The .exe sitting in the game folder is the ground truth --
+# My Games/<variant>/ only exists once the game has been launched at least once, so probing
+# Documents alone silently mis-detects a freshly-installed copy. Fall back to the config-folder
+# probe only when the exe check is ambiguous (both present, or neither).
+if [ -f "$GAME_DIR/SkyrimVR.exe" ] && [ ! -f "$GAME_DIR/SkyrimSE.exe" ]; then
+    SKYRIM_FOLDER="Skyrim VR"
+elif [ -f "$GAME_DIR/SkyrimSE.exe" ] && [ ! -f "$GAME_DIR/SkyrimVR.exe" ]; then
+    SKYRIM_FOLDER="Skyrim Special Edition"
+elif [ -d "$DOCUMENTS_DIR/My Games/Skyrim Special Edition" ] && [ ! -d "$DOCUMENTS_DIR/My Games/Skyrim VR" ]; then
     SKYRIM_FOLDER="Skyrim Special Edition"
 else
     SKYRIM_FOLDER="Skyrim VR"
@@ -164,8 +177,7 @@ done
 echo ""
 echo "Configuring CLAUDE.md..."
 if grep -q '{{GAME_ROOT}}' "$GAME_DIR/CLAUDE.md"; then
-    sed -i "s|{{GAME_ROOT}}|$GAME_DIR|g" "$GAME_DIR/CLAUDE.md"
-    sed -i "s|{{USERNAME}}|$USERNAME|g" "$GAME_DIR/CLAUDE.md"
+    sed -i "s|{{GAME_ROOT}}|$GAME_ROOT_WIN|g" "$GAME_DIR/CLAUDE.md"
     sed -i "s|{{DOCUMENTS_DIR}}|$DOCUMENTS_DIR|g" "$GAME_DIR/CLAUDE.md"
     sed -i "s|{{LOCALAPPDATA}}|$LOCALAPPDATA_DIR|g" "$GAME_DIR/CLAUDE.md"
     sed -i "s|{{SKYRIM_FOLDER}}|$SKYRIM_FOLDER|g" "$GAME_DIR/CLAUDE.md"

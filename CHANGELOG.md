@@ -1,5 +1,34 @@
 # Changelog
 
+## v3.2.1 — 2026-07-26
+
+Hotfix release. `setup.sh` only — no tool or knowledgebase changes. If you installed v3.1 or v3.2,
+re-run `bash setup.sh` against a fresh copy of `CLAUDE.md` (or fix the two Key Paths lines by hand);
+the paths it wrote for you were wrong.
+
+### Fixes
+- **The Load Order path written into CLAUDE.md was corrupted on every Windows install.**
+  `$LOCALAPPDATA` is backslash-delimited, and it was fed straight into `sed`'s replacement text,
+  where GNU sed treats `\U`, `\a` etc. as escapes — `C:\Users\You\AppData\Local` came out as
+  `C:SERSYOUAPPDATAocal`. Both `$LOCALAPPDATA` and the Documents path are now normalized to forward
+  slashes before substitution. Affects v3.1 and v3.2. (Fix by @awesmdiver.)
+- **SE installs with a redirected Documents folder were detected as VR.** `DOCUMENTS_DIR` was
+  hardcoded to `C:/Users/<you>/Documents`, so a Documents folder moved by OneDrive "Back up your
+  folders", a manual Properties → Location move, or a GPO redirect matched neither `My Games`
+  probe and fell through to the `Skyrim VR` default. Now resolved via
+  `[Environment]::GetFolderPath('MyDocuments')`, with the old hardcoded path as fallback.
+  (Fix by @awesmdiver.)
+- **The game root written into CLAUDE.md was an MSYS path, not a Windows path.** `pwd` under Git
+  Bash returns `/c/Games/Skyrim` — a form Claude's file tools and PowerShell can't open. CLAUDE.md
+  now gets the `C:/Games/Skyrim` form (`pwd -W`); the script's own filesystem work is unchanged.
+- **SE/VR detection ignored the one unambiguous signal.** A fresh install that had never been
+  launched has no `My Games/<variant>/` folder yet, so detection fell through to `Skyrim VR` even
+  when only `SkyrimSE.exe` was present. The game folder's `.exe` is now the primary signal, with
+  the config-folder probe as the tiebreaker.
+- Removed a dead `{{USERNAME}}` substitution — no such placeholder exists in the CLAUDE.md template.
+
+---
+
 ## v3.2 — 2026-07-09
 
 ### Fixes
