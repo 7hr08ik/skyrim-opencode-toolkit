@@ -1,5 +1,46 @@
 # Changelog
 
+## v3.3 — 2026-07-27
+
+### New Capabilities
+
+- **DevBench — the live in-game test channel.** The toolkit's tools all shortened the time to *make*
+  a change; this one attacks the loop that actually costs you evenings — change, launch, trigger,
+  "still broken", guess again. With [DevBench](https://www.nexusmods.com/skyrimspecialedition/mods/181326)
+  (alandtse) installed, Claude drives the **running** game itself: reads live state (Papyrus VM health,
+  active effects, inventory, quests, the loaded ref grid), runs console commands **and reads their
+  output**, calls Papyrus functions **and gets the return value back**, narrates tests on your HUD while
+  you're in the headset, dismisses modals, and runs scripted scenarios with real event waits instead of
+  guessed sleeps. Tuning a value stops being an edit→recompile→reload→ask-you-to-try cycle and becomes
+  another call into the live game.
+
+  **DevBench is NOT bundled** (GPL-3.0-or-later) — install it from Nexus mod 181326 into
+  `Data/SKSE/Plugins/devbench.dll`. It is dev-only: no gameplay change, no save data. The toolkit ships
+  the wrapper and the knowledge:
+  - **`tools/devbench-cli.sh`** — resolves the port automatically (reads DevBench's `runtime.json`,
+    else the per-runtime default: VR `8921`, SE/AE `8920`; override with `DEVBENCH_PORT`), and wraps
+    the common operations: `ping`, `alive`, `state`, `inspect <kind>`, `exec "<console cmd>"` (handles
+    the two-step capture/read fence), `call <Script> <Function> [args] [self]`, `describe`, `notify`
+    (HUD narration), plus a raw `tool` escape hatch for any tool and any JSON. Fails fast with a clear
+    message when the game isn't running.
+  - **`alive`** encodes the single most important hazard: DevBench's HTTP server runs on a **separate
+    thread from the game**, so a hung or deadlocked game still answers `ping`. Real liveness is whether
+    the `frame` counter advances between two reads — `alive` checks exactly that and exits 2 on a stuck
+    frame.
+  - **A new KNOWLEDGEBASE section** covering the hazards learned the hard way on a 700+ plugin VR load
+    order: the `game save` deadlock, what does and doesn't work while the game is paused (reads yes,
+    writes no, shader probes give false negatives), why heavy console commands like `smp reset` can CTD
+    a big load order, why you spawn test actors instead of poking the player's live state, the Papyrus
+    `call` gotchas (omitted trailing optionals are padded to neutral defaults, silently no-opping
+    `MoveTo`/`Disable`/`Kill`), and the protocol for tests a VR user must physically observe.
+
+### Docs
+
+- README, CLAUDE.md, `setup.sh`, `SETUP_PROMPT.txt`, and `docs/getting-started.md` all cover DevBench
+  as an optional tool, and it's credited to alandtse.
+
+---
+
 ## v3.2.1 — 2026-07-26
 
 Hotfix release. `setup.sh` only — no tool or knowledgebase changes. If you installed v3.1 or v3.2,

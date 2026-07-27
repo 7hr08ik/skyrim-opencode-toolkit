@@ -29,6 +29,7 @@ All under `tools/`:
 | **PyNifly** | NIF read/write incl. **BSTriShape (SSE)** + **animation/controller authoring** (Python, prebuilt DLL) | See PyNifly section below |
 | **ReSaver CLI** | Headless `.ess` save parse / query / cross-reference / clean / changeform-level diagnostics | `bash tools/resaver-cli.sh <op> <save.ess>` — read ops: `info\|dump\|find\|find-refs\|worries\|recon\|changeform\|extradata-scan\|changeform-diff\|freeze-report\|globaldata\|globaldata-diff`; write ops (dry-run unless `--apply`, always a NEW file): `set-global\|set-var\|clean\|reset-havok\|cleanse-formlists\|remove-created`; `verify-roundtrip` self-test. Every `--apply` is verify-gated (re-read==model or delete+fail). Resolve FormID→EditorID via `tools/resaver-resolve-names.js`. Needs JDK 17+ + ReSaver's jar (see install section). |
 | **cosave-info** | READ-ONLY structural survey of an SKSE `.skse` co-save → JSON (which mods stashed co-save data + how much) | `bash tools/cosave-cli.sh <cosave.skse>` (Python 3; the cosave sits next to its `.ess`) |
+| **DevBench** | **LIVE in-game** inspect / console / Papyrus / scenario via a localhost REST+MCP server — only while the game is actually running | `bash tools/devbench-cli.sh <ping\|alive\|state\|inspect\|exec\|call\|describe\|notify\|tool>` — see DevBench section below |
 
 > **Note**: Install the tools you need into a `tools/` folder in your game directory; the setup prompt walks through this. See the [xeditlib](https://github.com/WingedGuardian/xeditlib) repo for XEditLib setup. NifSkope and Blender (used for NIF render-verification and mesh repair — see below) are large external GUI apps installed separately, not bundled.
 
@@ -176,6 +177,52 @@ A crash-to-desktop must be caught in tooling, not in the headset. Use the right 
 | **Blender (headless)** | Mesh **repair** + **render-to-PNG** verification (uses the same nifly lib as PyNifly — good for repair, NOT an independent parser) |
 
 **Gates before any in-game test:** (1) author with valid-by-construction tools (PyNifly, not hand-rolled controller blocks); (2) cross-validate with an independent, stricter parser; (3) diff against a known-good structure. Render a PNG (Blender headless) so a mesh/VFX fix is confirmed in chat before a game launch.
+
+## DevBench — the live in-game test channel (`tools/devbench-cli.sh`)
+
+**The single biggest time sink in modding is the in-game test loop:** change something, ask the user to
+launch the game, have them trigger it, wait, hear "it didn't work", guess again. DevBench breaks that
+loop. It is a dev-only SKSE plugin (alandtse, Nexus SE **181326** — same author as Engine Fixes VR) that
+runs a **localhost REST + MCP server inside the running game**, so Claude can inspect live state, run
+console commands *and read their output*, call Papyrus functions and get the return value, dismiss
+modals, and drive scripted scenarios — directly, while the user just keeps playing.
+
+**NOT bundled** (GPL-3.0-or-later; the toolkit ships only the wrapper). Install it from Nexus into
+`Data/SKSE/Plugins/devbench.dll`. It changes no gameplay and writes no save data.
+
+```bash
+bash tools/devbench-cli.sh ping                        # is the server up?
+bash tools/devbench-cli.sh alive                       # is the GAME running, or hung/paused?
+bash tools/devbench-cli.sh state                       # {plugin,version,vr,playerLoaded,frame}
+bash tools/devbench-cli.sh inspect vm                  # Papyrus VM health — freeze diagnosis
+bash tools/devbench-cli.sh exec "player.getav health"  # console exec + capture + read output
+bash tools/devbench-cli.sh call Actor IsInCombat '[]' '{"form":"0x14"}'
+bash tools/devbench-cli.sh notify "Test 3 of 5: swing now"   # HUD narration
+bash tools/devbench-cli.sh tool menu '{"action":"accept"}'   # raw: any tool, any JSON
+```
+
+**Hard requirement — this is NOT headless.** The server only exists while the game is genuinely
+running with a save loaded. In VR that means the headset is on (Skyrim VR errors at VR-init without
+it). When the game is closed the port is dead — fall back to the offline tools (xelib, Spriggit,
+ReSaver, PyNifly).
+
+**Port is deterministic per runtime: SE/AE `8920`, VR `8921`** (DevBench iterates if the port is busy
+and writes the bound port to `Data/SKSE/Plugins/devbench/runtime.json`, which the wrapper reads).
+Override with `DEVBENCH_PORT`. MCP clients can point at `http://127.0.0.1:<port>/mcp`; the REST path
+the wrapper uses works any time the server is up, with no reconnect.
+
+**Tools:** `ping` · `console` (exec/read) · `inspect` (`state|vm|scene|mods|player|inventory|quests|
+effects|refs`) · `papyrus` (list/describe/**call**) · `menu` (list/describe/**accept**/open/close) ·
+`game` (save/load/list) · `scenario` (timed steps with `waitFor`/`waitUntil`, not guessed sleeps) ·
+`camera` · `record`/`replay`.
+
+**Standing practice — automate the test, don't delegate it.** On any in-game problem, ask "how do I
+test this myself instead of asking the user to?" Build a *parameterized* harness (a global Papyrus
+function callable via `call`, logging to a file you read off disk) rather than a one-shot, so sweeping
+a value or swapping a mechanism is another DevBench call — not another edit → recompile → user reload.
+Reserve manual testing for the final confirmation gate. See KNOWLEDGEBASE.md for the hazards
+(`game save` deadlock, paused-state semantics, heavy console commands) — read them before your first
+live session.
 
 ## ESP Cross-Reference Integrity (`tools/esp-verify-wrapper.sh`)
 

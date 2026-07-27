@@ -1432,3 +1432,72 @@ Three independent gates for an authored/edited mesh — run them in order before
   confirmed in chat before loading the game. Blender shares the nifly library, so it is NOT an
   independent parser — use it for repair/render, not parse-validation.
 
+
+---
+
+## DevBench — Live In-Game Testing (hazards + confirmed patterns)
+
+DevBench (alandtse, Nexus SE 181326) exposes the **running** game over a localhost REST/MCP server.
+Everything below was learned during live sessions on a heavy (700+ plugin) VR load order. Read this
+before your first live session — several of these cost a force-killed game to discover.
+
+### The server is not the game (liveness ≠ ping)
+- The HTTP server runs on a **separate thread from the game**. A deadlocked, hung, or paused game
+  still answers `ping` with `{"ok":true}`. **`ping` is not proof the game is alive.**
+- The real liveness test is whether `inspect {"kind":"state"}`'s **`frame` counter advances** between
+  two reads. Static frame = paused (in a menu) or hung. `tools/devbench-cli.sh alive` does exactly
+  this and exits 2 on a stuck frame.
+
+### ⚠ `game save` can deadlock the game (observed on v1.8.2)
+- Driving `game {action:"save"}` mid-session hung the game's main thread: a 0-byte `<name>.ess.tmp`
+  that never finalized, `inspect` timing out, frame counter stopped. Recovery was a force-kill of the
+  game process. `ping` kept answering the whole time.
+- **To reload a script for testing, have the USER do an in-game load (F9 / load menu)** — that path
+  never hung; only DevBench's own save did.
+- DevBench 1.9.1 changed this area ("console: reroute save/load to game tool path") and mutating
+  `game` actions are documented as fire-and-forget with `lifecycle` events for completion. Whether
+  the deadlock persists on current versions is **untested here** — treat `game save` as suspect and
+  prefer the user-driven load until you have verified otherwise on your version.
+
+### Paused-game semantics (in a menu)
+- **READ tools work while paused** — `inspect state/vm/scene/player/effects/refs` are fine, which
+  makes pause useful for a leisurely inspection.
+- **WRITE/act tools do NOT process while paused.** `console exec` only *queues* (commands run on the
+  game thread, landing a frame later); Papyrus `OnUpdate` does not fire. Do not mistake a paused game
+  for a logic failure.
+- Shader-state probes report **false negatives while paused** (playback is frozen), so a
+  "shader not playing" reading taken in a menu is meaningless. Check unpaused.
+
+### Don't wreck the live session you're testing in
+- **Heavy/global console commands can CTD a big load order.** A full `smp reset` reliably crashed a
+  700+ plugin VR load order — reproduced by typing it manually, so this is the command's cost, not
+  DevBench's fault. Keep live commands lightweight and targeted; get the user's OK and a save before
+  any state change.
+- **Don't poke the player's real ongoing activity to "test".** Firing state-mutating commands at live
+  systems pollutes engine state (e.g. the music instance stack, producing phantom double-tracks).
+  **Spawn dedicated test actors and act on those** (`player.placeatme <hostileBase> N`), and observe
+  the player's natural activity rather than perturbing it.
+- Many commands produce **no console output at all** (`addmusic`/`removemusic`, etc.). `count:0` from
+  a capture is normal — judge the result by re-reading state, not by captured lines.
+
+### Papyrus `call` gotchas
+- Globals/native functions: **omit `self`**. Member functions: pass it —
+  `{"form":"0x14"}` (or an EditorID), or `"selected"` for the console/crosshair ref (set via `prid`).
+- Unlike console `cgf`, **the return value comes back** (`{called, returned, returnedType}`) — this is
+  what makes read-modify-read loops possible without a play-session round trip.
+- **Omitted trailing optional params are padded with neutral defaults** (`None`/`0`/`0.0`/`false`/`""`).
+  For reference ops (`MoveTo`, `Disable`, `Kill`) a short arg list therefore **silently no-ops** —
+  pass every optional whose real default isn't neutral (e.g. `StringUtil.Substring`'s `-1`).
+- Array returns may not serialize (an array-returning function can come back as `none`) — probe with a
+  scalar-returning function instead of concluding the state is absent.
+
+### Protocol for tests the user must physically observe (VR)
+- **Narrate on the HUD.** The user cannot see chat while in the headset. Drive every instruction and
+  countdown through `Debug.Notification` (`devbench-cli.sh notify "..."`) so the sequence explains
+  itself in-game, and only ask them to remove the headset when the HUD says it's done.
+- **Burst, never single-shot.** A one-off effect is a "shooting star" the user will miss. Fire
+  10–15 times over ~10s so one burst is one unmissable observation.
+- **Prefer explicit player facing/angles over weapon-node geometry** when the test doesn't need the
+  weapon — it removes pose dependency.
+- Log results to a file and read them yourself. Don't rely on the user's eyes, and don't rely on
+  console capture where a Papyrus channel or an on-disk log will do.

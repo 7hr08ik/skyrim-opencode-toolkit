@@ -18,6 +18,32 @@ It's not perfect, and it will require some trial and error — especially for co
 
 ---
 
+## New in v3.3: Claude Can Test Its Own Fixes in the Running Game
+
+Every other feature here shortens the time it takes Claude to *make* a change. This one attacks the
+part that actually eats your evening: the test loop. Normally it goes change → you launch the game →
+you trigger the thing → "nope, still broken" → guess again. Ten minutes a cycle, and Claude is
+working blind off your description.
+
+**With [DevBench](https://www.nexusmods.com/skyrimspecialedition/mods/181326) installed, Claude drives
+the running game itself.** DevBench is a dev-only SKSE plugin (by alandtse, of Engine Fixes VR) that
+runs a small localhost server inside Skyrim — it changes no gameplay and writes nothing to your saves.
+Claude can then:
+
+- **Read live state** — the Papyrus VM's health (the actual diagnosis for script freezes), active
+  magic effects, your equipment, quests, the loaded reference grid.
+- **Run console commands and read their output** — not fire-and-forget like `cgf`; it sees the result.
+- **Call Papyrus functions and get the return value back**, so it can do read → change → re-read loops
+  without a single game restart.
+- **Narrate tests on your HUD** while you're in the headset, and dismiss modal popups for you.
+- **Run scripted scenarios** with real event waits instead of guessed sleeps.
+
+In practice, tuning a value stops being "edit, recompile, reload, ask you to try it" and becomes
+another call into the running game. You just keep playing. The toolkit ships the wrapper
+(`tools/devbench-cli.sh`) and the hard-won hazard list — DevBench itself you install from Nexus.
+
+---
+
 ## New in v3: Create Custom Animated VFX — and See Them Before You Load the Game
 
 v2 could read, edit, and build ESPs. **v3 adds the ability to author 3D mesh content and animation, and to verify it visually before it ever touches your headset.** This is the big leap, so it goes first:
@@ -97,6 +123,7 @@ None of these are bundled; setup walks you through any you pick.
 - **PyNifly** -- SSE BSTriShape + animation authoring (download `io_scene_nifly.zip` from the GitHub **releases**, not a git clone — the compiled DLL ships only in the release zip; no build)
 - **Blender (headless) / NifSkope** -- NIF mesh repair + render verification (large external apps)
 - **ReSaver CLI** -- headless `.ess` save parse / cross-reference / clean / changeform-level diagnostics (download ReSaver from **Nexus mod 5031** / FallrimTools into `tools/resaver-cli/`; requires **JDK 17+**, JDK 21 LTS recommended)
+- **DevBench** -- LIVE in-game inspect / console / Papyrus while the game runs (download from **Nexus mod 181326** / alandtse into `Data/SKSE/Plugins/devbench.dll`; GPL-3.0, dev-only, no gameplay change and no save data). The toolkit bundles the wrapper `tools/devbench-cli.sh`.
 - **cosave-info** -- read-only structural survey of an SKSE `.skse` co-save → JSON (which mods stashed co-save data + how much). No install beyond Python 3; bundled (`tools/cosave-cli.sh`).
 
 ---
@@ -301,4 +328,5 @@ MIT -- see [LICENSE](LICENSE).
 - [PyFFI](https://github.com/niftools/pyffi) -- LE-format NIF geometry editing
 - [Blender](https://www.blender.org/) and [NifSkope](https://github.com/niftools/nifskope) -- mesh repair and independent render verification
 - [FallrimTools / ReSaver](https://www.nexusmods.com/skyrimspecialedition/mods/5031) -- save-file (.ess) parsing library driven headlessly by the ReSaver CLI
+- [DevBench](https://www.nexusmods.com/skyrimspecialedition/mods/181326) by alandtse ([source](https://github.com/alandtse/devbench)) -- the live in-game REST/MCP channel the `devbench-cli.sh` wrapper drives
 - [Claude Code](https://claude.ai/code) by Anthropic
