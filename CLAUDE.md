@@ -4,15 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A modded Skyrim installation managed by Vortex (or your mod manager of choice). Adapt paths and version-specific notes to your Skyrim version: SE, AE, VR, or LE. VR-specific behavior is flagged throughout — never assume SSE behavior equals VR behavior.
+A modded Skyrim installation. Adapt paths and version-specific notes to your Skyrim version: SE, AE, VR, or LE. VR-specific behavior is flagged throughout — never assume SSE behavior equals VR behavior.
+
+`setup.sh` detects your mod manager and fills in the Key Paths below accordingly. **If it detected Mod Organizer 2, read the MO2 note in Key Paths before reading or writing any mod file** — MO2 has no real `Data/` folder, so the obvious path is the wrong one. See "Mod Manager Layout" in `KNOWLEDGEBASE.md`.
 
 ## Key Paths
 
 - **Game root**: `{{GAME_ROOT}}/`
-- **User INI configs**: `{{DOCUMENTS_DIR}}/My Games/{{SKYRIM_FOLDER}}/` (Skyrim.ini, SkyrimVR.ini, SkyrimPrefs.ini)
-- **Load order**: `{{LOCALAPPDATA}}/{{SKYRIM_FOLDER}}/loadorder.txt` and `plugins.txt`
+- **User INI configs**: `{{CONFIG_DIR}}/` (Skyrim.ini, SkyrimVR.ini, SkyrimPrefs.ini)
+- **Load order**: `{{LOADORDER_DIR}}/loadorder.txt` and `plugins.txt`
 - **SKSE plugins**: `Data/SKSE/Plugins/`
 - **Mod data**: `Data/` (ESPs, BSAs, meshes, textures, scripts)
+{{MOD_MANAGER_PATHS}}
 
 ## Installed Modding Tools
 

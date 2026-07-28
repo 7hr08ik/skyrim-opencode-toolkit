@@ -160,6 +160,26 @@ The toolkit loads automatically every time. No re-setup needed.
 
 ---
 
+## What's in `tools/`
+
+These ship with the toolkit and are ready to run. You don't need to memorise them — Claude knows what
+each one is for — but it helps to know what's there.
+
+| Script | What it does |
+|---|---|
+| `devbench-cli.sh` | Drive the **running** game: inspect live state, run console commands and read their output, call Papyrus functions. Needs DevBench installed. |
+| `esp-verify-wrapper.sh` | Snapshot a plugin's cross-references before a risky bulk edit, then verify afterwards — fails loudly if a reference was silently re-mastered or dropped. |
+| `spriggit-cli.sh` | Spriggit wrapper that works around its failure on deeply-nested output paths. Use instead of calling Spriggit directly. |
+| `automod-cli.sh` | AutoMod CLI wrapper (NIF / BSA / audio / MCM / ESP one-liners). Runs the prebuilt Release DLL. |
+| `resaver-cli.sh` | Headless `.ess` save parsing, querying, cross-referencing, cleaning, and changeform diagnostics. |
+| `resaver-resolve-names.js` | Resolve a FormID to its EditorID and record signature. |
+| `cosave-cli.sh` | Read-only structural survey of an SKSE `.skse` co-save. |
+| `pyffi-geometry-split.py` | Split one combined NIF mesh into separate shapes so each can take its own shader (e.g. a glowing blade with a non-glowing hilt). |
+| `blender-nif-validate.py` | Headless Blender mesh validation. |
+| `blender-nif-render.py` | Headless Blender render of a NIF to PNG, so a mesh fix is confirmed before you load the game. |
+| `nexus.sh` | Nexus API wrapper for mod version / changelog lookups. Never prints your key. |
+| `xelib/` | The xelib helpers, including the load-order loader. |
+
 ## Troubleshooting
 
 **"Claude Code won't start"**

@@ -153,11 +153,89 @@ elif [ -d "$DOCUMENTS_DIR/My Games/Skyrim Special Edition" ] && [ ! -d "$DOCUMEN
 else
     SKYRIM_FOLDER="Skyrim VR"
 fi
+CONFIG_DIR="$DOCUMENTS_DIR/My Games/$SKYRIM_FOLDER"
+LOADORDER_DIR="$LOCALAPPDATA_DIR/$SKYRIM_FOLDER"
+
+# --- Detect Mod Organizer 2 -------------------------------------------------
+# MO2 has NO flat Data/ folder on disk. It builds a virtual one at launch by merging each enabled
+# mod's own folder. So on an MO2 setup the game's Data/ holds the stock game and almost none of the
+# user's mods, and the profile -- not Documents -- is where the INIs and load order live. Getting
+# this wrong means every path we write into CLAUDE.md points somewhere real but nearly empty.
+MO2_INSTANCE=""; MO2_MODS=""; MO2_PROFILE=""; MO2_PROFILE_DIR=""; MO2_OVERWRITE=""
+
+ini_get() { # $1=file $2=section $3=key  -> value, QSettings-unescaped, forward-slashed
+    awk -v sec="[$2]" -v key="$3" '
+        /^[ \t]*\[/ { insec = ($0 ~ "^[ \t]*\\" sec); next }
+        insec && index($0, key) == 1 {
+            eq = index($0, "="); if (eq == 0) next
+            v = substr($0, eq + 1); sub(/^[ \t]+/, "", v); sub(/[ \t\r]+$/, "", v)
+            gsub(/^"|"$/, "", v); print v; exit
+        }' "$1" 2>/dev/null | sed 's/\\\\/\\/g' | tr '\134' '/'
+}
+
+find_mo2_instance() {
+    local ini gp
+    # Global instances live one folder deep under %LOCALAPPDATA%\ModOrganizer\<InstanceName>\.
+    # A portable instance keeps its ini in the MO2 install folder -- point MO2_INSTANCE_INI at it.
+    for ini in "${MO2_INSTANCE_INI:-}" "$LOCALAPPDATA_DIR/ModOrganizer"/*/ModOrganizer.ini; do
+        [ -f "$ini" ] || continue
+        gp="$(ini_get "$ini" General gamePath)"
+        [ -n "$gp" ] || continue
+        # Match this game folder case-insensitively, ignoring any trailing slash.
+        if [ "$(echo "${gp%/}" | tr 'A-Z' 'a-z')" = "$(echo "${GAME_ROOT_WIN%/}" | tr 'A-Z' 'a-z')" ]; then
+            echo "$ini"; return 0
+        fi
+    done
+    return 1
+}
+
+if MO2_INI="$(find_mo2_instance)"; then
+    MO2_INSTANCE="$(dirname "$MO2_INI")"
+    # base_directory is optional. It can also be written as the literal %BASE_DIR% token, which is
+    # self-referential -- in both cases the base IS the instance folder.
+    MO2_BASE="$(ini_get "$MO2_INI" Settings base_directory)"
+    MO2_BASE="${MO2_BASE//\%BASE_DIR\%/}"
+    [ -n "$MO2_BASE" ] || MO2_BASE="$MO2_INSTANCE"
+    # The per-directory overrides are optional too, and commonly embed %BASE_DIR%.
+    resolve_dir() { # $1=ini key  $2=default subfolder
+        local v; v="$(ini_get "$MO2_INI" Settings "$1")"
+        [ -n "$v" ] || { echo "$MO2_BASE/$2"; return; }
+        v="${v//\%BASE_DIR\%/$MO2_BASE}"
+        # A bare/relative override is relative to the base directory.
+        case "$v" in [A-Za-z]:/*|/*) echo "$v" ;; *) echo "$MO2_BASE/$v" ;; esac
+    }
+    MO2_MODS="$(resolve_dir mod_directory mods)"
+    MO2_OVERWRITE="$(resolve_dir overwrite_directory overwrite)"
+    MO2_PROFILES="$(resolve_dir profiles_directory profiles)"
+    MO2_PROFILE="$(ini_get "$MO2_INI" General selected_profile)"
+    [ -n "$MO2_PROFILE" ] || MO2_PROFILE="Default"
+    MO2_PROFILE_DIR="$MO2_PROFILES/$MO2_PROFILE"
+    # MO2 keeps loadorder.txt/plugins.txt in the profile, and the INIs too when that profile has
+    # "profile-specific INI files" enabled (the default, but it IS a per-profile toggle). Only move
+    # the paths when the files are genuinely there -- don't assume.
+    if [ -f "$MO2_PROFILE_DIR/loadorder.txt" ]; then
+        LOADORDER_DIR="$MO2_PROFILE_DIR"
+    fi
+    if [ -f "$MO2_PROFILE_DIR/SkyrimPrefs.ini" ] || [ -f "$MO2_PROFILE_DIR/skyrimprefs.ini" ]; then
+        CONFIG_DIR="$MO2_PROFILE_DIR"
+    fi
+fi
+
 echo ""
-if [ -d "$DOCUMENTS_DIR/My Games/$SKYRIM_FOLDER" ]; then
-    echo "  Found Skyrim configs in: $DOCUMENTS_DIR/My Games/$SKYRIM_FOLDER/"
+if [ -n "$MO2_INSTANCE" ]; then
+    echo "  Mod manager: Mod Organizer 2"
+    echo "    Instance: $MO2_INSTANCE"
+    echo "    Profile:  $MO2_PROFILE"
+    echo "    Mods:     $MO2_MODS"
+    echo "  NOTE: MO2 builds a VIRTUAL Data/ folder at launch -- there is no merged Data/ on disk."
+    echo "        Your mods' real files live under the mods folder above, one folder per mod."
+elif [ -d "$CONFIG_DIR" ]; then
+    echo "  Mod manager: not MO2 (stock layout / Vortex -- mods deploy into the game's Data/)"
+fi
+if [ -d "$CONFIG_DIR" ]; then
+    echo "  Found Skyrim configs in: $CONFIG_DIR/"
 else
-    echo "  WARNING: Skyrim config not found under $DOCUMENTS_DIR/My Games/"
+    echo "  WARNING: Skyrim config not found at $CONFIG_DIR"
     echo "  You may need to update paths in CLAUDE.md manually."
 fi
 
@@ -178,9 +256,41 @@ echo ""
 echo "Configuring CLAUDE.md..."
 if grep -q '{{GAME_ROOT}}' "$GAME_DIR/CLAUDE.md"; then
     sed -i "s|{{GAME_ROOT}}|$GAME_ROOT_WIN|g" "$GAME_DIR/CLAUDE.md"
-    sed -i "s|{{DOCUMENTS_DIR}}|$DOCUMENTS_DIR|g" "$GAME_DIR/CLAUDE.md"
-    sed -i "s|{{LOCALAPPDATA}}|$LOCALAPPDATA_DIR|g" "$GAME_DIR/CLAUDE.md"
+    sed -i "s|{{CONFIG_DIR}}|$CONFIG_DIR|g" "$GAME_DIR/CLAUDE.md"
+    sed -i "s|{{LOADORDER_DIR}}|$LOADORDER_DIR|g" "$GAME_DIR/CLAUDE.md"
     sed -i "s|{{SKYRIM_FOLDER}}|$SKYRIM_FOLDER|g" "$GAME_DIR/CLAUDE.md"
+
+    # Mod-manager block. Built in a temp file and spliced in with sed's `r`, so no amount of
+    # punctuation in a path can break the substitution.
+    MM_BLOCK="$(mktemp)"
+    if [ -n "$MO2_INSTANCE" ]; then
+        cat > "$MM_BLOCK" <<MMEOF
+- **Mod manager**: **Mod Organizer 2** — instance \`$MO2_INSTANCE/\`, profile \`$MO2_PROFILE\`
+- **MO2 mods**: \`$MO2_MODS/<mod-name>/\` — the REAL location of every installed mod's files
+- **MO2 overwrite**: \`$MO2_OVERWRITE/\` — catches files written to Data/ during a session
+- **MO2 profile**: \`$MO2_PROFILE_DIR/\` — this profile's INIs, \`loadorder.txt\`, \`plugins.txt\`
+
+> **⚠ MO2 has no real \`Data/\` folder.** It builds a *virtual* one at launch by merging the stock
+> game folder, each enabled mod's folder, and \`overwrite/\` (highest priority). The \`Data/\` path
+> above is the **stock game only** — it does NOT contain the user's mods. To inspect an installed
+> mod's files, read \`$MO2_MODS/<mod-name>/\`, not \`Data/\`.
+>
+> **This breaks load-order-aware tooling.** xelib/XEditLib resolves plugins from the game path, so
+> launched outside MO2 it sees only the plugins physically present in the stock \`Data/\` — it will
+> silently return a *wrong but plausible* answer for anything involving the override chain or the
+> full load order. For those, run the script through MO2 (add it to MO2's executables list) so the
+> virtual filesystem is mounted. Single-file reads (Spriggit on a specific \`.esp\` by path) work
+> fine outside MO2, because they never consult the load order.
+MMEOF
+    else
+        cat > "$MM_BLOCK" <<'MMEOF'
+- **Mod manager**: stock layout (Vortex or manual) — mods deploy their files directly into `Data/`,
+  so `Data/` is the real, merged view of everything installed.
+MMEOF
+    fi
+    sed -i -e "/{{MOD_MANAGER_PATHS}}/{r $MM_BLOCK" -e "d}" "$GAME_DIR/CLAUDE.md"
+    rm -f "$MM_BLOCK"
+
     echo "  Configured with your paths (Skyrim folder: $SKYRIM_FOLDER)."
 else
     echo "  Already configured."

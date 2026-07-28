@@ -18,6 +18,26 @@ It's not perfect, and it will require some trial and error — especially for co
 
 ---
 
+## New in v3.4: Mod Organizer 2 Support
+
+If you use MO2, previous versions quietly pointed Claude at the wrong folders. **MO2 has no real
+merged `Data/` folder** — it builds a virtual one at launch, so the game's `Data/` holds the stock
+game and almost none of your mods, and your INIs and load order live in the profile rather than in
+Documents. The toolkit assumed the Vortex/stock layout throughout.
+
+Setup now detects your MO2 instance (global or portable), matches it to this game folder, resolves
+your active profile and the real mods/overwrite/profile paths, and writes those into `CLAUDE.md`
+instead of the wrong ones. It also warns Claude about the trap that costs MO2 users the most time:
+**load-order-aware tooling launched outside MO2 doesn't error — it silently returns a wrong but
+plausible answer**, because it only sees the plugins physically present in the stock `Data/`. Non-MO2
+setups are unaffected and get a stock-layout note instead.
+
+Also new: an **`AGENTS.md`** so agents that follow that convention can pick the toolkit up. The
+knowledge and every tool are agent-neutral already; the safety hooks are the Claude-specific part, and
+`AGENTS.md` is explicit that other agents don't get them.
+
+---
+
 ## New in v3.3: Claude Can Test Its Own Fixes in the Running Game
 
 Every other feature here shortens the time it takes Claude to *make* a change. This one attacks the

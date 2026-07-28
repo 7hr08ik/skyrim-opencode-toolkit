@@ -1501,3 +1501,151 @@ before your first live session — several of these cost a force-killed game to 
   weapon — it removes pose dependency.
 - Log results to a file and read them yourself. Don't rely on the user's eyes, and don't rely on
   console capture where a Papyrus channel or an on-disk log will do.
+
+---
+
+## Mod Manager Layout — MO2's Virtual Filesystem (read this before trusting any path)
+
+**Mod Organizer 2 has no real merged `Data/` folder.** It builds a *virtual* one at launch by
+overlaying, in priority order: the stock game's `Data/`, then each enabled mod's own folder, then
+`overwrite/` (highest). That virtual view exists **only while MO2 is running a program through it**.
+
+Vortex and manual installs are the opposite — they deploy mod files directly into the game's `Data/`,
+so `Data/` really is the merged view. Everything else in this knowledgebase assumes that layout.
+
+**What this changes for MO2 users:**
+
+| Thing | Stock / Vortex | MO2 |
+|---|---|---|
+| A mod's actual files | `Data/...` | `<instance>/mods/<mod-name>/...` |
+| INIs | `Documents/My Games/<game>/` | `<instance>/profiles/<profile>/` (when profile-specific INIs are on — a per-profile toggle) |
+| `loadorder.txt` / `plugins.txt` | `%LOCALAPPDATA%/<game>/` | `<instance>/profiles/<profile>/` |
+| Files a tool writes into `Data/` at runtime | land in `Data/` | land in `<instance>/overwrite/` |
+
+**Finding the instance:** global instances live in `%LOCALAPPDATA%/ModOrganizer/<InstanceName>/`;
+a portable instance keeps everything in MO2's own install folder. Either way the settings are in
+`ModOrganizer.ini` — `[General]` holds `gamePath`, `gameName`, `selected_profile`; `[Settings]` holds
+the optional `base_directory`, `mod_directory`, `profiles_directory`, `overwrite_directory` overrides,
+which may contain the literal token `%BASE_DIR%`. Values are QSettings-escaped (backslashes doubled).
+Match an instance to a game folder by comparing its `gamePath`. `setup.sh` does all of this
+automatically and writes the correct paths into CLAUDE.md.
+
+### The silent-wrong-answer trap: load-order tooling outside MO2
+
+**xelib/XEditLib resolves plugins from the game path.** Launched *outside* MO2, it sees only the
+plugins physically present in the stock `Data/` — which on an MO2 setup is the base game and little
+else. It does not error. It returns a **wrong but entirely plausible** answer for anything involving
+the override chain, conflict resolution, or the full load order.
+
+- **Needs the MO2 VFS** (run the script through MO2's executables list): override-chain resolution,
+  "what wins this conflict", anything reading the full load order, load-order-dependent edits.
+- **Works fine outside MO2**: reading or editing a single plugin by path (Spriggit serialize /
+  deserialize), because those never consult the load order at all. This is the main reason to prefer
+  Spriggit for single-plugin work on an MO2 install.
+
+The same logic applies to any tool that resolves the game path from the registry rather than from an
+explicit file path.
+
+---
+
+## Papyrus: a recompiled `.pex` only loads at game STARTUP
+
+A `.pex` is read when the game launches. **A mid-session save/load never re-reads it from disk** — not
+even loading a save that has never seen your mod. If you recompile a script attached to an active magic
+effect or ability and then quickload, the game keeps running the **old bytecode**: Skyrim bakes the
+script instance into the save and restores that instance on load.
+
+**The only reliable refresh:** quit to desktop, relaunch, and load a **pre-activation** save (one made
+before that effect was ever active). A post-activation save restores its baked instance even after a
+full restart.
+
+**Verify which build is live rather than assuming.** Plant a distinctive log line in each build and
+check for it in the on-disk log — that is the definitive marker. Separately, grep a newly added string
+into the `.pex` on disk first, which distinguishes "it did not compile" from "it did not load".
+
+**Design implication — this is the real fix.** Because loading new code is expensive, make anything you
+intend to *iterate* a runtime parameter (a `GlobalVariable` the script reads each run) instead of a
+constant. Tuning then never changes the code: one load to get the parameter-driven build in, and zero
+reloads for the entire sweep, flipping values live via the console or DevBench. Put the *mechanism*
+behind a parameter too, not just the magnitude, so you can swap approaches without recompiling.
+
+---
+
+## xelib `setFormID`: the master-count high-byte trap
+
+The "local" FormID xelib reports for a record a plugin **owns** is **master-count-prefixed**, not the
+bare lower three bytes. A plugin with 4 masters owns records whose local form looks like `0x040008XX`.
+
+Passing a bare `0x8B3` to `setFormID(rec, 0x8B3, true)` sets the high byte to `0x00`, which the engine
+reads as **an override of `Skyrim.esm` form `0x0008B3`** — a silently corrupt record, and two plugins
+doing it will collide. `GetFormFromFile` matches on the lower three bytes, so it can *appear* to
+half-work, which is what makes this expensive to track down.
+
+```js
+const n = xelib.getMasterNames(file).length;   // e.g. 4
+const localFid = (n << 24) | 0x0008B3;         // 0x040008B3
+const copy = xelib.copyElement(srcRecord, file, true);   // asNew = standalone
+xelib.setFormID(copy, localFid, true, false);            // local = true, fixRefs = false
+```
+
+**Verify any ESP edit with a full before/after Spriggit YAML diff** — stronger than a reference-only
+check, because it also catches silently dropped fields. Serialize a backup and the live file, then
+`diff -r`; only the intended delta should appear. (`--PackageVersion` is required whenever
+`--GameRelease` / `--PackageName` are set.)
+
+---
+
+## Reused vanilla records can carry gating Conditions
+
+If a reused vanilla magic effect or spell fires on **some** targets but not others — "hit or miss" —
+suspect **Conditions on the MGEF** before anything else. Vanilla effects are often built for a specific
+quest context and carry checks (`HasKeyword`, `GetRestrained`, and similar) that made sense there and
+quietly gate your reuse. Conditions are evaluated when the effect applies; targets that fail simply get
+nothing, with no error anywhere.
+
+Checklist when reusing a vanilla magic effect that must fire reliably:
+
+1. **Own the record first** (see the Own Your Records rule) so another mod's override cannot
+   reintroduce the gate, then **strip the Conditions** on your copy.
+2. **Check delivery.** A Constant-Effect / Self ability applied via `AddSpell` lands instantly and
+   cannot miss; an Aimed projectile cast at a target can whiff entirely.
+3. **Check Resist Value** — a separate axis from Conditions. Set it to `None` for unresistable.
+
+Serializing your copy with Spriggit is the fastest way to actually *see* inherited fields you never set.
+
+---
+
+## Crash logs: CrashLogger writes `.LOG`, not `.txt`
+
+Recent CrashLogger versions write crash logs as **`.LOG`** into `Documents/My Games/<game>/SKSE/` and
+open the newest one in Notepad. If you are looking for `crash-*.txt` and finding nothing, that is why.
+Sort that folder by modified time after a CTD.
+
+---
+
+## AutoMod BSA extract/repack needs `bsarch.exe`
+
+AutoMod's `archive` module reads a BSA index natively for `list`, but `extract`, `extract-file`, and
+`repack` shell out to **BSArch.exe** — without it they fail with `BSArch not found`. Place `bsarch.exe`
+at `<build-output>/tools/bsarch/bsarch.exe`, i.e. under the same `bin/Release/net8.0/` folder the
+wrapper runs the DLL from. **It lives under `bin/`, so any `dotnet build` or `clean` of AutoMod wipes
+it** — keep a canonical copy elsewhere and re-place it after a rebuild.
+
+Similarly, `audio wav-to-xwm` needs `xWMAEncode.exe`, which is not bundled. It is often simpler to call
+`xWMAEncode` directly than to go through AutoMod.
+
+---
+
+## Explosion knockback needs a Knock Down flag, not more Force
+
+An `EXPL` record's `DATA\Force` **only moves actors if a Knock Down flag is set** in `DATA\Flags`.
+Without `Knock Down - Always` or `Knock Down - By Formula`, raising Force does nothing at all — you can
+go 3, then 50, then 1000, and see zero knockback. This is a classic dead end: the parameter looks like
+the knob, and it is not.
+
+- `Knock Down - Always` ragdolls every affected actor regardless of mass; `Knock Down - By Formula` is
+  mass-weighted and gentler.
+- Force pushes **radially away from the explosion centre**, so a self-centred explosion flings distant
+  actors outward. For a directional fling the centre must be offset from the target.
+- For simple visible knockback, the engine-native `PushActorAway(target, magnitude)` (roughly 1-5 =
+  stagger through ragdoll) is usually a better tool than an explosion at all.

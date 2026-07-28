@@ -1,5 +1,61 @@
 # Changelog
 
+## v3.4 — 2026-07-27
+
+### New Capabilities
+
+- **Mod Organizer 2 support.** Previous versions assumed the Vortex/stock layout, where mods deploy
+  into the game's `Data/`. **MO2 has no real merged `Data/` folder** — it builds a virtual one at
+  launch by overlaying the stock game, each enabled mod's own folder, and `overwrite/`. So on an MO2
+  setup the toolkit was pointing Claude at a real-but-nearly-empty `Data/`, and at Documents and
+  `%LOCALAPPDATA%` for INIs and load order that actually live in the MO2 profile.
+
+  `setup.sh` now detects MO2 (global instances under `%LOCALAPPDATA%/ModOrganizer/<name>/`, or a
+  portable instance via `MO2_INSTANCE_INI`), matches an instance to this game folder by its
+  `gamePath`, resolves `selected_profile` and the real mods / overwrite / profiles directories
+  (including `base_directory` overrides and the `%BASE_DIR%` token), and writes those paths into
+  `CLAUDE.md` — moving the INI and load-order paths to the profile when the files are genuinely
+  there. Non-MO2 installs are unaffected and get a short stock-layout note instead.
+
+- **The MO2 silent-wrong-answer trap is now documented** in `KNOWLEDGEBASE.md` and injected into
+  CLAUDE.md for MO2 users: xelib/XEditLib resolves plugins from the game path, so launched *outside*
+  MO2 it sees only the plugins physically in the stock `Data/`. It doesn't error — it returns a wrong
+  but plausible answer for anything involving the override chain or full load order. Run those through
+  MO2's executables list; single-plugin work (Spriggit by path) is fine outside MO2 because it never
+  consults the load order.
+
+- **`AGENTS.md`** — the toolkit now ships the cross-agent convention file, so agents that look for it
+  find their way in. It points at `CLAUDE.md` rather than duplicating it (so they can't drift), and is
+  explicit about what is portable (the knowledgebase and every tool — plain bash/Node/Python) versus
+  what is Claude Code specific (the safety hooks and skills), with concrete compensating practices for
+  agents that don't get the guardrails.
+
+### Knowledgebase
+
+Six additions, kept deliberately to things any Skyrim modder hits regardless of what they're building:
+
+- **Mod manager layout** — the MO2 virtual filesystem, where each thing really lives, and the
+  load-order tooling trap.
+- **A recompiled `.pex` only loads at game startup** — a mid-session save/load never re-reads it, not
+  even from a save that has never seen your mod. The only reliable refresh is a full restart onto a
+  *pre-activation* save. Includes the design implication: make anything you intend to tune a runtime
+  parameter, so iterating never touches the code.
+- **xelib `setFormID` master-count high-byte trap** — a bare local FormID sets the high byte to `0x00`,
+  which the engine reads as an override of a `Skyrim.esm` record. Silently corrupt, and it half-works
+  often enough to be expensive to find.
+- **Reused vanilla records can carry gating Conditions** — the usual cause of a vanilla effect that
+  fires on some targets but not others.
+- **CrashLogger writes `.LOG`, not `.txt`** — why your crash logs appear to be missing.
+- **AutoMod BSA extract/repack needs `bsarch.exe`**, and it lives under `bin/`, so any rebuild wipes it.
+- **Explosion knockback needs a Knock Down flag** — `DATA\Force` moves nobody without it, no matter how
+  high you raise it.
+
+### Docs
+
+- `docs/getting-started.md` gains a "What's in `tools/`" reference table naming every bundled script.
+
+---
+
 ## v3.3 — 2026-07-27
 
 ### New Capabilities
