@@ -1,8 +1,11 @@
 # User-specific settings (contains local paths)
-.claude/settings.local.json
+.opencode/settings.local.json
 
 # Backups (generated at runtime)
-.claude/backups/
+.opencode/backups/
+
+# Tests
+.opencode/tests/
 
 # Node modules
 node_modules/
