@@ -1,11 +1,11 @@
 # User-specific settings (contains local paths)
 .opencode/settings.local.json
 
+# Agent Harness related files
+.codegraph
+
 # Backups (generated at runtime)
 .opencode/backups/
-
-# Tests
-.opencode/tests/
 
 # Node modules
 node_modules/

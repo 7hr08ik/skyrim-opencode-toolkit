@@ -1,0 +1,28 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": {
+      "ls": "allow",
+      "rm": "allow",
+      "cp": "allow",
+      "mkdir": "allow",
+      "head": "allow",
+      "bash": "allow",
+      "export": "allow",
+      "git": "allow",
+      "node": "allow",
+      "npm install": "allow",
+      "npm uninstall": "allow",
+      "python": "allow",
+      "pip install": "allow",
+      "dotnet": "allow",
+      "curl": "allow",
+      "powershell": "allow",
+      "cmd.exe": "allow",
+      "reg query": "allow",
+      "gh auth": "allow"
+    },
+    "websearch": "allow",
+    "webfetch": "allow"
+  }
+}
